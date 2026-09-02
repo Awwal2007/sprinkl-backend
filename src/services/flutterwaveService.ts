@@ -189,7 +189,7 @@ export class FlutterwaveService {
           amount: amountNaira,
           narration: params.reason || 'Sprinkl Giveaway Payout',
           currency: 'NGN',
-          reference: params.reference || `TRF_${Date.now()}`,
+          reference: (params.reference || `TRF_${Date.now()}`).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 100),
           debit_currency: 'NGN',
         },
         { headers: this.headers }
