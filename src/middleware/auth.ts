@@ -1,7 +1,12 @@
-const jwt = require('jsonwebtoken');
-const User = require('../models/User');
+import { Request, Response, NextFunction } from 'express';
+import jwt from 'jsonwebtoken';
+import User, { IUser } from '../models/User';
 
-const authenticateToken = async (req, res, next) => {
+export interface AuthRequest extends Request {
+  user?: IUser;
+}
+
+export const authenticateToken = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
@@ -11,7 +16,7 @@ const authenticateToken = async (req, res, next) => {
     }
 
     const secret = process.env.JWT_ACCESS_SECRET || 'givehub_jwt_access_secret_sprinkl_2026_super_key';
-    const decoded = jwt.verify(token, secret);
+    const decoded = jwt.verify(token, secret) as { userId: string };
 
     const user = await User.findById(decoded.userId);
     if (!user) {
@@ -25,11 +30,9 @@ const authenticateToken = async (req, res, next) => {
   }
 };
 
-const requireAdmin = (req, res, next) => {
+export const requireAdmin = (req: AuthRequest, res: Response, next: NextFunction) => {
   if (req.user && req.user.role === 'admin') {
     return next();
   }
   return res.status(403).json({ error: 'Admin privilege required' });
 };
-
-module.exports = { authenticateToken, requireAdmin };

@@ -1,20 +1,60 @@
-const crypto = require('crypto');
-const User = require('../models/User');
-const Transaction = require('../models/Transaction');
-const LedgerService = require('../services/ledgerService');
+import { Request, Response, NextFunction } from 'express';
+import crypto from 'crypto';
+import User from '../models/User';
+import Transaction from '../models/Transaction';
+import LedgerService from '../services/ledgerService';
 
-exports.handlePaystackWebhook = async (req, res, next) => {
+export const handleFlutterwaveWebhook = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const hash = crypto
-      .createHmac('sha512', process.env.PAYSTACK_SECRET_KEY || 'sk_test_mock_paystack_secret_key')
-      .update(JSON.stringify(req.body))
-      .digest('hex');
+    const secretHash = process.env.FLUTTERWAVE_SECRET_HASH || 'sprinkl_flw_secret_2026';
+    const signature = req.headers['verif-hash'];
 
-    const paystackHeader = req.headers['x-paystack-signature'];
-    
-    // In production, enforce signature validation:
-    // if (hash !== paystackHeader) return res.status(401).send('Invalid signature');
+    if (signature && signature !== secretHash) {
+      return res.status(401).send('Invalid signature');
+    }
 
+    const payload = req.body;
+
+    if (payload.event === 'charge.completed' && payload.data && payload.data.status === 'successful') {
+      const { amount, customer, tx_ref } = payload.data;
+      const email = customer.email;
+
+      const user = await User.findOne({ email });
+      if (user) {
+        const existingTx = await Transaction.findOne({ provider: 'flutterwave', providerReference: tx_ref });
+        if (!existingTx) {
+          const amountKobo = Math.round(amount * 100);
+          const tx = await Transaction.create({
+            user: user._id,
+            provider: 'flutterwave',
+            providerReference: tx_ref,
+            direction: 'inbound',
+            currency: 'NGN',
+            amount: amountKobo,
+            status: 'success',
+            rawPayload: payload,
+          });
+
+          await LedgerService.creditWallet({
+            userId: user._id,
+            currency: 'NGN',
+            amount: amountKobo,
+            referenceType: 'PaystackTransaction',
+            referenceId: tx._id,
+          });
+        }
+      }
+    }
+
+    return res.status(200).send('Webhook received');
+  } catch (err) {
+    console.error('[Flutterwave Webhook Error]', err);
+    return res.status(500).send('Webhook error');
+  }
+};
+
+export const handlePaystackWebhook = async (req: Request, res: Response, next: NextFunction) => {
+  try {
     const event = req.body;
 
     if (event.event === 'charge.success') {
@@ -23,7 +63,6 @@ exports.handlePaystackWebhook = async (req, res, next) => {
 
       const user = await User.findOne({ email });
       if (user) {
-        // Prevent duplicate webhook processing
         const existingTx = await Transaction.findOne({ provider: 'paystack', providerReference: reference });
         if (!existingTx) {
           const tx = await Transaction.create({
@@ -55,7 +94,7 @@ exports.handlePaystackWebhook = async (req, res, next) => {
   }
 };
 
-exports.handleCryptoDepositWebhook = async (req, res, next) => {
+export const handleCryptoDepositWebhook = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { userId, txHash, chain, amountUsdtInteger } = req.body;
 

@@ -1,8 +1,9 @@
-const Transaction = require('../models/Transaction');
-const User = require('../models/User');
-const Claim = require('../models/Claim');
+import { Request, Response, NextFunction } from 'express';
+import Transaction from '../models/Transaction';
+import User from '../models/User';
+import Claim from '../models/Claim';
 
-exports.getTransactions = async (req, res, next) => {
+export const getTransactions = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const transactions = await Transaction.find()
       .sort({ createdAt: -1 })
@@ -16,13 +17,11 @@ exports.getTransactions = async (req, res, next) => {
   }
 };
 
-exports.getFlaggedAccounts = async (req, res, next) => {
+export const getFlaggedAccounts = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    // Find users with high transaction volume or flagged status
     const users = await User.find().select('-passwordHash');
 
-    // Aggregate payouts per host
-    const highVolumeHosts = [];
+    const highVolumeHosts: any[] = [];
     for (const u of users) {
       const claims = await Claim.aggregate([
         {
@@ -40,12 +39,12 @@ exports.getFlaggedAccounts = async (req, res, next) => {
 
       let ngnVolume = 0;
       let usdtVolume = 0;
-      claims.forEach(c => {
+      claims.forEach((c) => {
         if (c._id === 'NGN') ngnVolume = c.totalVolume;
         if (c._id === 'USDT') usdtVolume = c.totalVolume;
       });
 
-      const isFlagged = ngnVolume >= u.kyc.payoutReviewThreshold || usdtVolume >= 1000000000; // 1,000 USDT threshold
+      const isFlagged = ngnVolume >= u.kyc.payoutReviewThreshold || usdtVolume >= 1000000000;
 
       highVolumeHosts.push({
         user: u,

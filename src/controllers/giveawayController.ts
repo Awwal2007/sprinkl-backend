@@ -1,48 +1,48 @@
-const mongoose = require('mongoose');
-const { nanoid } = require('nanoid');
-const { z } = require('zod');
-const Giveaway = require('../models/Giveaway');
-const Claim = require('../models/Claim');
-const LedgerService = require('../services/ledgerService');
+import { Response, NextFunction } from 'express';
+import mongoose from 'mongoose';
+import { nanoid } from 'nanoid';
+import { z } from 'zod';
+import Giveaway from '../models/Giveaway';
+import Claim from '../models/Claim';
+import LedgerService from '../services/ledgerService';
+import { AuthRequest } from '../middleware/auth';
 
 const createGiveawaySchema = z.object({
   title: z.string().min(3).max(120),
   description: z.string().max(2000).optional(),
   coverImageUrl: z.string().optional(),
   currency: z.enum(['NGN', 'USDT']),
-  amountPerRecipient: z.number().positive(), // in main unit (e.g., Naira or USDT)
+  amountPerRecipient: z.number().positive(),
   totalSlots: z.number().int().min(1),
   expiresAt: z.string().optional(),
-  settings: z.object({
-    restrictFirstTimeClaimantsOnly: z.boolean().default(false),
-    requirePhoneOtp: z.boolean().default(false),
-    successMessage: z.string().max(300).optional(),
-  }).optional(),
+  settings: z
+    .object({
+      restrictFirstTimeClaimantsOnly: z.boolean().default(false),
+      requirePhoneOtp: z.boolean().default(false),
+      successMessage: z.string().max(300).optional(),
+    })
+    .optional(),
 });
 
-exports.createGiveaway = async (req, res, next) => {
+export const createGiveaway = async (req: AuthRequest, res: Response, next: NextFunction) => {
   const session = await mongoose.startSession();
   session.startTransaction();
 
   try {
     const data = createGiveawaySchema.parse(req.body);
-    const userId = req.user._id;
+    const userId = req.user!._id;
 
-    // Convert amountPerRecipient to smallest integer unit
     let amountPerRecipientSmallest = 0;
     if (data.currency === 'NGN') {
-      amountPerRecipientSmallest = Math.round(data.amountPerRecipient * 100); // kobo
+      amountPerRecipientSmallest = Math.round(data.amountPerRecipient * 100);
     } else {
-      amountPerRecipientSmallest = Math.round(data.amountPerRecipient * 1000000); // 6-dec USDT units
+      amountPerRecipientSmallest = Math.round(data.amountPerRecipient * 1000000);
     }
 
-    const platformFee = 0; // Configurable fee
-    const totalReservedAmount = (amountPerRecipientSmallest * data.totalSlots) + platformFee;
+    const platformFee = 0;
+    const totalReservedAmount = amountPerRecipientSmallest * data.totalSlots + platformFee;
 
-    // 1. Generate unique unguessable slug
     const slug = nanoid(10);
-
-    // 2. Reserve funds atomically from host's available wallet balance
     const giveawayIdPlaceholder = new mongoose.Types.ObjectId();
 
     await LedgerService.reserveForGiveaway(
@@ -55,7 +55,6 @@ exports.createGiveaway = async (req, res, next) => {
       session
     );
 
-    // 3. Create Giveaway record
     const giveaway = new Giveaway({
       _id: giveawayIdPlaceholder,
       host: userId,
@@ -91,7 +90,7 @@ exports.createGiveaway = async (req, res, next) => {
         publicUrl: `${process.env.DOMAIN || 'https://sprinkl.biz'}/g/${giveaway.slug}`,
       },
     });
-  } catch (err) {
+  } catch (err: any) {
     await session.abortTransaction();
     if (err.name === 'ZodError') {
       return res.status(400).json({ error: err.errors[0].message });
@@ -102,22 +101,20 @@ exports.createGiveaway = async (req, res, next) => {
   }
 };
 
-exports.getHostGiveaways = async (req, res, next) => {
+export const getHostGiveaways = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const giveaways = await Giveaway.find({ host: req.user._id })
-      .sort({ createdAt: -1 });
-
+    const giveaways = await Giveaway.find({ host: req.user!._id }).sort({ createdAt: -1 });
     return res.json({ giveaways });
   } catch (err) {
     next(err);
   }
 };
 
-exports.getHostGiveawayById = async (req, res, next) => {
+export const getHostGiveawayById = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const giveaway = await Giveaway.findOne({
       _id: req.params.id,
-      host: req.user._id,
+      host: req.user!._id,
     });
 
     if (!giveaway) {
@@ -134,14 +131,14 @@ exports.getHostGiveawayById = async (req, res, next) => {
   }
 };
 
-exports.cancelGiveaway = async (req, res, next) => {
+export const cancelGiveaway = async (req: AuthRequest, res: Response, next: NextFunction) => {
   const session = await mongoose.startSession();
   session.startTransaction();
 
   try {
     const giveaway = await Giveaway.findOne({
       _id: req.params.id,
-      host: req.user._id,
+      host: req.user!._id,
       status: { $in: ['active', 'paused'] },
     }).session(session);
 
@@ -149,15 +146,13 @@ exports.cancelGiveaway = async (req, res, next) => {
       return res.status(404).json({ error: 'Active giveaway not found' });
     }
 
-    // Calculate remaining unspent slots
     const unclaimedSlots = giveaway.totalSlots - giveaway.slotsClaimed;
     const unspentAmount = unclaimedSlots * giveaway.amountPerRecipient;
 
     if (unspentAmount > 0) {
-      // Release reserved funds back to host's available balance
       await LedgerService.releaseReservedFunds(
         {
-          userId: req.user._id,
+          userId: req.user!._id,
           currency: giveaway.currency,
           amount: unspentAmount,
           giveawayId: giveaway._id,

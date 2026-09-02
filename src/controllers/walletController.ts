@@ -1,12 +1,14 @@
-const LedgerService = require('../services/ledgerService');
-const LedgerEntry = require('../models/LedgerEntry');
-const paystackService = require('../services/paystackService');
-const cryptoService = require('../services/cryptoService');
-const Transaction = require('../models/Transaction');
+import { Response, NextFunction } from 'express';
+import LedgerService from '../services/ledgerService';
+import LedgerEntry from '../models/LedgerEntry';
+import flutterwaveService from '../services/flutterwaveService';
+import cryptoService from '../services/cryptoService';
+import Transaction from '../models/Transaction';
+import { AuthRequest } from '../middleware/auth';
 
-exports.getWallet = async (req, res, next) => {
+export const getWallet = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const userId = req.user._id;
+    const userId = req.user!._id;
 
     const ngnWallet = await LedgerService.getOrCreateWallet(userId, 'NGN');
     const usdtWallet = await LedgerService.getOrCreateWallet(userId, 'USDT');
@@ -29,10 +31,10 @@ exports.getWallet = async (req, res, next) => {
         },
       },
       dva: {
-        accountNumber: req.user.paystackDvaAccountNumber,
-        bankName: req.user.paystackDvaBankName,
+        accountNumber: req.user!.paystackDvaAccountNumber,
+        bankName: req.user!.paystackDvaBankName,
       },
-      cryptoAddresses: req.user.cryptoDepositAddresses || [],
+      cryptoAddresses: req.user!.cryptoDepositAddresses || [],
       ledgerHistory,
     });
   } catch (err) {
@@ -40,15 +42,15 @@ exports.getWallet = async (req, res, next) => {
   }
 };
 
-exports.setupNgnDva = async (req, res, next) => {
+export const setupNgnDva = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const user = req.user;
+    const user = req.user!;
 
     if (!user.paystackDvaAccountNumber) {
-      const dvaInfo = await paystackService.createDedicatedVirtualAccount(user);
+      const dvaInfo = await flutterwaveService.createVirtualAccount(user);
       user.paystackDvaAccountNumber = dvaInfo.accountNumber;
       user.paystackDvaBankName = dvaInfo.bankName;
-      user.paystackCustomerCode = dvaInfo.customerCode;
+      user.paystackCustomerCode = dvaInfo.flwRef;
       await user.save();
     }
 
@@ -64,7 +66,7 @@ exports.setupNgnDva = async (req, res, next) => {
   }
 };
 
-exports.simulateFundNgn = async (req, res, next) => {
+export const simulateFundNgn = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { amountNaira } = req.body;
     if (!amountNaira || amountNaira <= 0) {
@@ -73,21 +75,20 @@ exports.simulateFundNgn = async (req, res, next) => {
 
     const amountKobo = Math.round(amountNaira * 100);
 
-    // Create provider transaction audit record
-    const refId = 'PAYSTACK_DVA_' + Date.now();
+    const refId = 'FLW_DVA_' + Date.now();
     const tx = await Transaction.create({
-      user: req.user._id,
-      provider: 'paystack',
+      user: req.user!._id,
+      provider: 'flutterwave',
       providerReference: refId,
       direction: 'inbound',
       currency: 'NGN',
       amount: amountKobo,
       status: 'success',
-      rawPayload: { note: 'Simulated DVA Bank Transfer Deposit' },
+      rawPayload: { note: 'Simulated Flutterwave DVA Bank Transfer Deposit' },
     });
 
     const wallet = await LedgerService.creditWallet({
-      userId: req.user._id,
+      userId: req.user!._id,
       currency: 'NGN',
       amount: amountKobo,
       referenceType: 'PaystackTransaction',
@@ -106,17 +107,17 @@ exports.simulateFundNgn = async (req, res, next) => {
   }
 };
 
-exports.getUsdtDepositAddress = async (req, res, next) => {
+export const getUsdtDepositAddress = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { chain = 'TRC20' } = req.body;
-    const user = req.user;
+    const user = req.user!;
 
-    let existing = user.cryptoDepositAddresses.find(a => a.chain === chain);
+    let existing = user.cryptoDepositAddresses.find((a) => a.chain === chain);
     if (!existing) {
-      const address = cryptoService.generateDepositAddress(user._id, chain);
-      user.cryptoDepositAddresses.push({ chain, address });
+      const address = cryptoService.generateDepositAddress(user._id.toString(), chain);
+      user.cryptoDepositAddresses.push({ chain, address, createdAt: new Date() });
       await user.save();
-      existing = { chain, address };
+      existing = { chain, address, createdAt: new Date() };
     }
 
     return res.json({
@@ -128,19 +129,18 @@ exports.getUsdtDepositAddress = async (req, res, next) => {
   }
 };
 
-exports.simulateFundUsdt = async (req, res, next) => {
+export const simulateFundUsdt = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { amountUsdt, chain = 'TRC20' } = req.body;
     if (!amountUsdt || amountUsdt <= 0) {
       return res.status(400).json({ error: 'USDT amount must be greater than 0' });
     }
 
-    // Convert to smallest 6-decimal USDT integer units (1 USDT = 1,000,000 units)
     const amountUnits = Math.round(amountUsdt * 1000000);
 
     const txHash = (chain === 'TRC20' ? 'tron_dep_' : 'bsc_dep_') + Date.now().toString(16);
     const tx = await Transaction.create({
-      user: req.user._id,
+      user: req.user!._id,
       provider: chain === 'TRC20' ? 'tron' : 'bsc',
       providerReference: txHash,
       direction: 'inbound',
@@ -151,7 +151,7 @@ exports.simulateFundUsdt = async (req, res, next) => {
     });
 
     const wallet = await LedgerService.creditWallet({
-      userId: req.user._id,
+      userId: req.user!._id,
       currency: 'USDT',
       amount: amountUnits,
       referenceType: 'CryptoDeposit',

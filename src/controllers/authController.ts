@@ -1,7 +1,9 @@
-const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
-const { z } = require('zod');
-const User = require('../models/User');
+import { Request, Response, NextFunction } from 'express';
+import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
+import { z } from 'zod';
+import User from '../models/User';
+import { AuthRequest } from '../middleware/auth';
 
 const signupSchema = z.object({
   fullName: z.string().min(2).max(120),
@@ -15,7 +17,7 @@ const loginSchema = z.object({
   password: z.string(),
 });
 
-const generateTokens = (userId) => {
+const generateTokens = (userId: any) => {
   const accessSecret = process.env.JWT_ACCESS_SECRET || 'givehub_jwt_access_secret_sprinkl_2026_super_key';
   const refreshSecret = process.env.JWT_REFRESH_SECRET || 'givehub_jwt_refresh_secret_sprinkl_2026_super_key';
 
@@ -25,7 +27,7 @@ const generateTokens = (userId) => {
   return { accessToken, refreshToken };
 };
 
-exports.signup = async (req, res, next) => {
+export const signup = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const data = signupSchema.parse(req.body);
 
@@ -44,7 +46,7 @@ exports.signup = async (req, res, next) => {
       passwordHash,
       role: 'host',
       kyc: {
-        status: 'verified', // Auto-verify KYC lite on signup for instant onboarding under 60 seconds
+        status: 'verified',
         payoutReviewThreshold: parseInt(process.env.DEFAULT_KYC_PAYOUT_REVIEW_THRESHOLD || '500000', 10),
       },
     });
@@ -69,7 +71,7 @@ exports.signup = async (req, res, next) => {
         kyc: user.kyc,
       },
     });
-  } catch (err) {
+  } catch (err: any) {
     if (err.name === 'ZodError') {
       return res.status(400).json({ error: err.errors[0].message });
     }
@@ -77,7 +79,7 @@ exports.signup = async (req, res, next) => {
   }
 };
 
-exports.login = async (req, res, next) => {
+export const login = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const data = loginSchema.parse(req.body);
 
@@ -109,7 +111,7 @@ exports.login = async (req, res, next) => {
         kyc: user.kyc,
       },
     });
-  } catch (err) {
+  } catch (err: any) {
     if (err.name === 'ZodError') {
       return res.status(400).json({ error: err.errors[0].message });
     }
@@ -117,7 +119,11 @@ exports.login = async (req, res, next) => {
   }
 };
 
-exports.me = async (req, res) => {
+export const me = async (req: AuthRequest, res: Response) => {
+  if (!req.user) {
+    return res.status(401).json({ error: 'Not authenticated' });
+  }
+
   return res.json({
     user: {
       id: req.user._id,

@@ -1,31 +1,30 @@
-const { nanoid } = require('nanoid');
-const { z } = require('zod');
-const Giveaway = require('../models/Giveaway');
-const Claim = require('../models/Claim');
-const paystackService = require('../services/paystackService');
-const cryptoService = require('../services/cryptoService');
-const PayoutWorker = require('../jobs/payoutWorker');
+import { Request, Response, NextFunction } from 'express';
+import { z } from 'zod';
+import Giveaway from '../models/Giveaway';
+import Claim from '../models/Claim';
+import flutterwaveService from '../services/flutterwaveService';
+import cryptoService from '../services/cryptoService';
+import PayoutWorker from '../jobs/payoutWorker';
 
 const claimSchema = z.object({
   claimantName: z.string().min(2).max(120),
   claimantEmail: z.string().email().optional(),
   claimantPhone: z.string().optional(),
-  // NGN fields
   bankCode: z.string().optional(),
   bankName: z.string().optional(),
   accountNumber: z.string().optional(),
   resolvedAccountName: z.string().optional(),
-  // USDT fields
   chain: z.enum(['TRC20', 'BEP20']).optional(),
   walletAddress: z.string().optional(),
-  // Meta
   deviceFingerprint: z.string().optional(),
 });
 
-exports.getPublicGiveaway = async (req, res, next) => {
+export const getPublicGiveaway = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const giveaway = await Giveaway.findOne({ slug: req.params.slug })
-      .populate('host', 'fullName email');
+    const giveaway = await Giveaway.findOne({ slug: req.params.slug }).populate(
+      'host',
+      'fullName email'
+    );
 
     if (!giveaway) {
       return res.status(404).json({ error: 'Giveaway not found' });
@@ -55,10 +54,10 @@ exports.getPublicGiveaway = async (req, res, next) => {
         slotsRemaining: giveaway.totalSlots - giveaway.slotsClaimed,
         expiresAt: giveaway.expiresAt,
         settings: giveaway.settings,
-        hostName: giveaway.host?.fullName || 'GiveHub Host',
+        hostName: (giveaway.host as any)?.fullName || 'Sprinkl Host',
         seo: {
-          title: `${giveaway.title} | GiveHub on Sprinkl.biz`,
-          description: `Claim your share of ${giveaway.currency} from ${giveaway.host?.fullName || 'GiveHub Host'}`,
+          title: `${giveaway.title} | Sprinkl`,
+          description: `Claim your share of ${giveaway.currency} from ${(giveaway.host as any)?.fullName || 'Sprinkl Host'}`,
           url: `${process.env.DOMAIN || 'https://sprinkl.biz'}/g/${giveaway.slug}`,
         },
       },
@@ -68,35 +67,34 @@ exports.getPublicGiveaway = async (req, res, next) => {
   }
 };
 
-exports.getBanks = async (req, res, next) => {
+export const getBanks = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const banks = await paystackService.getBankList();
+    const banks = await flutterwaveService.getBankList();
     return res.json({ banks });
   } catch (err) {
     next(err);
   }
 };
 
-exports.resolveBank = async (req, res, next) => {
+export const resolveBank = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { accountNumber, bankCode } = req.body;
     if (!accountNumber || !bankCode) {
       return res.status(400).json({ error: 'Account number and bank code are required' });
     }
 
-    const resolved = await paystackService.resolveAccount(accountNumber, bankCode);
+    const resolved = await flutterwaveService.resolveAccount(accountNumber, bankCode);
     return res.json({ resolved });
-  } catch (err) {
+  } catch (err: any) {
     return res.status(400).json({ error: err.message });
   }
 };
 
-exports.submitClaim = async (req, res, next) => {
+export const submitClaim = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const data = claimSchema.parse(req.body);
     const slug = req.params.slug;
 
-    // 1. Fetch Giveaway
     const giveaway = await Giveaway.findOne({ slug, status: 'active' });
     if (!giveaway) {
       return res.status(404).json({ error: 'Active giveaway not found' });
@@ -106,13 +104,14 @@ exports.submitClaim = async (req, res, next) => {
       return res.status(400).json({ error: 'All slots for this giveaway have been claimed!' });
     }
 
-    // 2. Validate payout destination & normalize destination string
     let normalizedDestination = '';
-    let destinationObj = {};
+    let destinationObj: any = {};
 
     if (giveaway.currency === 'NGN') {
       if (!data.accountNumber || !data.bankCode) {
-        return res.status(400).json({ error: 'Bank account number and bank choice are required for NGN claims' });
+        return res
+          .status(400)
+          .json({ error: 'Bank account number and bank choice are required for NGN claims' });
       }
       if (data.accountNumber.length !== 10) {
         return res.status(400).json({ error: 'Nigerian bank account numbers must be 10 digits' });
@@ -144,7 +143,6 @@ exports.submitClaim = async (req, res, next) => {
       };
     }
 
-    // 3. Platform-wide first-time claimant check if setting enabled
     if (giveaway.settings?.restrictFirstTimeClaimantsOnly) {
       const previousClaim = await Claim.findOne({
         'destination.normalized': normalizedDestination,
@@ -152,12 +150,12 @@ exports.submitClaim = async (req, res, next) => {
       });
       if (previousClaim) {
         return res.status(400).json({
-          error: 'This host restricted claims to first-time platform users only. Your account/wallet has claimed before.',
+          error:
+            'This host restricted claims to first-time platform users only. Your account/wallet has claimed before.',
         });
       }
     }
 
-    // 4. Atomic slot reservation guard: Increment slotsClaimed ONLY IF slotsClaimed < totalSlots
     const updatedGiveaway = await Giveaway.findOneAndUpdate(
       { _id: giveaway._id, status: 'active', slotsClaimed: { $lt: giveaway.totalSlots } },
       { $inc: { slotsClaimed: 1 } },
@@ -165,14 +163,15 @@ exports.submitClaim = async (req, res, next) => {
     );
 
     if (!updatedGiveaway) {
-      return res.status(400).json({ error: 'Sorry! The last slot was just taken by another claimant.' });
+      return res
+        .status(400)
+        .json({ error: 'Sorry! The last slot was just taken by another claimant.' });
     }
 
     if (updatedGiveaway.slotsClaimed >= updatedGiveaway.totalSlots) {
       await Giveaway.findByIdAndUpdate(giveaway._id, { status: 'completed' });
     }
 
-    // 5. Create Claim document with unique compound index guarantee on (giveaway, destination.normalized)
     const idempotencyKey = `CLAIM_${giveaway._id}_${normalizedDestination}_${Date.now()}`;
 
     let claim;
@@ -198,20 +197,19 @@ exports.submitClaim = async (req, res, next) => {
       });
 
       await claim.save();
-    } catch (dbErr) {
-      // Rollback atomically reserved slot if claim creation fails due to duplicate
+    } catch (dbErr: any) {
       await Giveaway.findByIdAndUpdate(giveaway._id, { $inc: { slotsClaimed: -1 } });
 
       if (dbErr.code === 11000) {
         return res.status(409).json({
-          error: 'You have already claimed this giveaway! Each bank account or wallet address can only claim once.',
+          error:
+            'You have already claimed this giveaway! Each bank account or wallet address can only claim once.',
         });
       }
       throw dbErr;
     }
 
-    // 6. Enqueue background payout job
-    await PayoutWorker.enqueuePayout(claim._id);
+    await PayoutWorker.enqueuePayout(claim._id.toString());
 
     return res.status(201).json({
       message: 'Claim submitted successfully! Payout processing initiated.',
@@ -224,7 +222,7 @@ exports.submitClaim = async (req, res, next) => {
         successMessage: giveaway.settings?.successMessage || 'Thank you for participating!',
       },
     });
-  } catch (err) {
+  } catch (err: any) {
     if (err.name === 'ZodError') {
       return res.status(400).json({ error: err.errors[0].message });
     }
@@ -232,7 +230,7 @@ exports.submitClaim = async (req, res, next) => {
   }
 };
 
-exports.getClaimStatus = async (req, res, next) => {
+export const getClaimStatus = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const claim = await Claim.findById(req.params.claimId);
     if (!claim) {

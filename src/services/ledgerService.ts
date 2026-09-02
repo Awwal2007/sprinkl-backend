@@ -1,12 +1,38 @@
-const mongoose = require('mongoose');
-const WalletAccount = require('../models/WalletAccount');
-const LedgerEntry = require('../models/LedgerEntry');
+import mongoose, { ClientSession, Types } from 'mongoose';
+import WalletAccount, { IWalletAccount } from '../models/WalletAccount';
+import LedgerEntry, { LedgerEntryType } from '../models/LedgerEntry';
 
-class LedgerService {
+export interface ICreditWalletParams {
+  userId: Types.ObjectId | string;
+  currency: 'NGN' | 'USDT';
+  amount: number;
+  referenceType: 'Giveaway' | 'Claim' | 'PaystackTransaction' | 'CryptoDeposit';
+  referenceId: Types.ObjectId | string;
+}
+
+export interface IReserveFundsParams {
+  userId: Types.ObjectId | string;
+  currency: 'NGN' | 'USDT';
+  amount: number;
+  giveawayId: Types.ObjectId | string;
+}
+
+export interface IPayoutParams {
+  userId: Types.ObjectId | string;
+  currency: 'NGN' | 'USDT';
+  amount: number;
+  claimId: Types.ObjectId | string;
+}
+
+export class LedgerService {
   /**
    * Get or create a WalletAccount for a user & currency
    */
-  static async getOrCreateWallet(userId, currency, session = null) {
+  static async getOrCreateWallet(
+    userId: Types.ObjectId | string,
+    currency: 'NGN' | 'USDT',
+    session: ClientSession | null = null
+  ): Promise<IWalletAccount> {
     let wallet = await WalletAccount.findOne({ user: userId, currency }).session(session);
     if (!wallet) {
       wallet = new WalletAccount({ user: userId, currency, available: 0, reserved: 0 });
@@ -16,28 +42,31 @@ class LedgerService {
   }
 
   /**
-   * Credit user wallet (e.g. Paystack DVA webhook or USDT deposit)
+   * Credit user wallet (e.g. Flutterwave DVA webhook or USDT deposit)
    */
-  static async creditWallet({ userId, currency, amount, referenceType, referenceId }, externalSession = null) {
-    const session = externalSession || await mongoose.startSession();
+  static async creditWallet(
+    params: ICreditWalletParams,
+    externalSession: ClientSession | null = null
+  ): Promise<IWalletAccount> {
+    const session = externalSession || (await mongoose.startSession());
     const isLocalSession = !externalSession;
     if (isLocalSession) session.startTransaction();
 
     try {
-      const wallet = await this.getOrCreateWallet(userId, currency, session);
+      const wallet = await this.getOrCreateWallet(params.userId, params.currency, session);
 
-      wallet.available += amount;
+      wallet.available += params.amount;
       wallet.version += 1;
       await wallet.save({ session });
 
       const ledgerEntry = new LedgerEntry({
-        user: userId,
-        currency,
-        type: 'fund',
-        amount,
+        user: params.userId,
+        currency: params.currency,
+        type: 'fund' as LedgerEntryType,
+        amount: params.amount,
         direction: 'credit',
-        referenceType,
-        referenceId,
+        referenceType: params.referenceType,
+        referenceId: params.referenceId,
         balanceAfter: wallet.available + wallet.reserved,
       });
 
@@ -57,31 +86,36 @@ class LedgerService {
    * Reserve funds for a newly created Giveaway.
    * Lock funds from available -> reserved.
    */
-  static async reserveForGiveaway({ userId, currency, amount, giveawayId }, externalSession = null) {
-    const session = externalSession || await mongoose.startSession();
+  static async reserveForGiveaway(
+    params: IReserveFundsParams,
+    externalSession: ClientSession | null = null
+  ): Promise<IWalletAccount> {
+    const session = externalSession || (await mongoose.startSession());
     const isLocalSession = !externalSession;
     if (isLocalSession) session.startTransaction();
 
     try {
-      const wallet = await this.getOrCreateWallet(userId, currency, session);
+      const wallet = await this.getOrCreateWallet(params.userId, params.currency, session);
 
-      if (wallet.available < amount) {
-        throw new Error(`Insufficient ${currency} balance. Required: ${amount}, Available: ${wallet.available}`);
+      if (wallet.available < params.amount) {
+        throw new Error(
+          `Insufficient ${params.currency} balance. Required: ${params.amount}, Available: ${wallet.available}`
+        );
       }
 
-      wallet.available -= amount;
-      wallet.reserved += amount;
+      wallet.available -= params.amount;
+      wallet.reserved += params.amount;
       wallet.version += 1;
       await wallet.save({ session });
 
       const ledgerEntry = new LedgerEntry({
-        user: userId,
-        currency,
-        type: 'reserve',
-        amount,
+        user: params.userId,
+        currency: params.currency,
+        type: 'reserve' as LedgerEntryType,
+        amount: params.amount,
         direction: 'debit',
         referenceType: 'Giveaway',
-        referenceId: giveawayId,
+        referenceId: params.giveawayId,
         balanceAfter: wallet.available + wallet.reserved,
       });
 
@@ -100,28 +134,31 @@ class LedgerService {
   /**
    * Release reserved funds back to available (e.g. Giveaway cancelled or expired)
    */
-  static async releaseReservedFunds({ userId, currency, amount, giveawayId }, externalSession = null) {
-    const session = externalSession || await mongoose.startSession();
+  static async releaseReservedFunds(
+    params: IReserveFundsParams,
+    externalSession: ClientSession | null = null
+  ): Promise<IWalletAccount> {
+    const session = externalSession || (await mongoose.startSession());
     const isLocalSession = !externalSession;
     if (isLocalSession) session.startTransaction();
 
     try {
-      const wallet = await this.getOrCreateWallet(userId, currency, session);
+      const wallet = await this.getOrCreateWallet(params.userId, params.currency, session);
 
-      const releaseAmount = Math.min(wallet.reserved, amount);
+      const releaseAmount = Math.min(wallet.reserved, params.amount);
       wallet.reserved -= releaseAmount;
       wallet.available += releaseAmount;
       wallet.version += 1;
       await wallet.save({ session });
 
       const ledgerEntry = new LedgerEntry({
-        user: userId,
-        currency,
-        type: 'release',
+        user: params.userId,
+        currency: params.currency,
+        type: 'release' as LedgerEntryType,
         amount: releaseAmount,
         direction: 'credit',
         referenceType: 'Giveaway',
-        referenceId: giveawayId,
+        referenceId: params.giveawayId,
         balanceAfter: wallet.available + wallet.reserved,
       });
 
@@ -140,26 +177,29 @@ class LedgerService {
   /**
    * Debit reserved funds upon successful claim payout
    */
-  static async debitPayout({ userId, currency, amount, claimId }, externalSession = null) {
-    const session = externalSession || await mongoose.startSession();
+  static async debitPayout(
+    params: IPayoutParams,
+    externalSession: ClientSession | null = null
+  ): Promise<IWalletAccount> {
+    const session = externalSession || (await mongoose.startSession());
     const isLocalSession = !externalSession;
     if (isLocalSession) session.startTransaction();
 
     try {
-      const wallet = await this.getOrCreateWallet(userId, currency, session);
+      const wallet = await this.getOrCreateWallet(params.userId, params.currency, session);
 
-      wallet.reserved = Math.max(0, wallet.reserved - amount);
+      wallet.reserved = Math.max(0, wallet.reserved - params.amount);
       wallet.version += 1;
       await wallet.save({ session });
 
       const ledgerEntry = new LedgerEntry({
-        user: userId,
-        currency,
-        type: 'payout',
-        amount,
+        user: params.userId,
+        currency: params.currency,
+        type: 'payout' as LedgerEntryType,
+        amount: params.amount,
         direction: 'debit',
         referenceType: 'Claim',
-        referenceId: claimId,
+        referenceId: params.claimId,
         balanceAfter: wallet.available + wallet.reserved,
       });
 
@@ -178,7 +218,7 @@ class LedgerService {
   /**
    * Reconcile cached balance vs LedgerEntry sum for audit integrity check
    */
-  static async reconcileUserWallet(userId, currency) {
+  static async reconcileUserWallet(userId: Types.ObjectId | string, currency: 'NGN' | 'USDT') {
     const wallet = await WalletAccount.findOne({ user: userId, currency });
     if (!wallet) return { valid: true, cachedTotal: 0, ledgerTotal: 0, drift: 0 };
 
@@ -204,4 +244,4 @@ class LedgerService {
   }
 }
 
-module.exports = LedgerService;
+export default LedgerService;

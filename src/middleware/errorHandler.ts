@@ -1,4 +1,6 @@
-const errorHandler = (err, req, res, next) => {
+import { Request, Response, NextFunction } from 'express';
+
+export const errorHandler = (err: any, req: Request, res: Response, next: NextFunction) => {
   console.error('[Error Handler]', err);
 
   if (err.name === 'ValidationError') {
@@ -14,4 +16,4 @@ const errorHandler = (err, req, res, next) => {
   });
 };
 
-module.exports = errorHandler;
+export default errorHandler;

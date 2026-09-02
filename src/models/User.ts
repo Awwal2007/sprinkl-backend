@@ -1,7 +1,33 @@
-const mongoose = require('mongoose');
-const { Schema } = mongoose;
+import { Schema, model, Document, Types } from 'mongoose';
 
-const userSchema = new Schema(
+export interface ICryptoDepositAddress {
+  chain: 'TRC20' | 'BEP20';
+  address: string;
+  createdAt: Date;
+}
+
+export interface IUser extends Document {
+  _id: Types.ObjectId;
+  fullName: string;
+  email: string;
+  phone?: string;
+  passwordHash: string;
+  role: 'host' | 'admin';
+  emailVerified: boolean;
+  kyc: {
+    status: 'none' | 'pending' | 'verified' | 'rejected';
+    payoutReviewThreshold: number;
+  };
+  cryptoDepositAddresses: ICryptoDepositAddress[];
+  paystackCustomerCode?: string;
+  paystackDvaAccountNumber?: string;
+  paystackDvaBankName?: string;
+  refreshTokenHash?: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+const userSchema = new Schema<IUser>(
   {
     fullName: { type: String, required: true, trim: true, maxlength: 120 },
     email: {
@@ -29,12 +55,9 @@ const userSchema = new Schema(
         enum: ['none', 'pending', 'verified', 'rejected'],
         default: 'none',
       },
-      // Payout volume above which manual review is triggered, per
-      // compliance guidance — configurable, not hardcoded.
-      payoutReviewThreshold: { type: Number, default: 500000 }, // kobo
+      payoutReviewThreshold: { type: Number, default: 500000 },
     },
 
-    // Crypto deposit addresses generated for this host, keyed by chain.
     cryptoDepositAddresses: [
       {
         chain: { type: String, enum: ['TRC20', 'BEP20'] },
@@ -52,4 +75,4 @@ const userSchema = new Schema(
   { timestamps: true }
 );
 
-module.exports = mongoose.model('User', userSchema);
+export default model<IUser>('User', userSchema);

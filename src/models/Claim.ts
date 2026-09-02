@@ -1,14 +1,51 @@
-const mongoose = require('mongoose');
-const { Schema } = mongoose;
+import { Schema, model, Document, Types } from 'mongoose';
 
-/**
- * Claim
- * One document per attempted/successful claim against a Giveaway.
- * The unique compound index below is the hard, database-level guarantee
- * that a given destination (bank account or wallet address) can only be
- * paid once per giveaway — this must hold even under concurrent requests.
- */
-const claimSchema = new Schema(
+export type ClaimStatus =
+  | 'pending'
+  | 'processing'
+  | 'paid'
+  | 'failed'
+  | 'rejected_duplicate';
+
+export interface IClaimDestination {
+  bankCode?: string;
+  bankName?: string;
+  accountNumber?: string;
+  resolvedAccountName?: string;
+  chain?: 'TRC20' | 'BEP20' | null;
+  walletAddress?: string;
+  normalized: string;
+}
+
+export interface IClaimMeta {
+  ipAddress?: string;
+  userAgent?: string;
+  deviceFingerprint?: string;
+  captchaVerified?: boolean;
+  otpVerified?: boolean;
+}
+
+export interface IClaim extends Document {
+  _id: Types.ObjectId;
+  giveaway: Types.ObjectId;
+  claimantName: string;
+  claimantContact?: {
+    email?: string;
+    phone?: string;
+  };
+  currency: 'NGN' | 'USDT';
+  destination: IClaimDestination;
+  amount: number;
+  status: ClaimStatus;
+  idempotencyKey: string;
+  payoutReference?: string;
+  failureReason?: string;
+  meta: IClaimMeta;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+const claimSchema = new Schema<IClaim>(
   {
     giveaway: { type: Schema.Types.ObjectId, ref: 'Giveaway', required: true, index: true },
 
@@ -21,17 +58,14 @@ const claimSchema = new Schema(
     currency: { type: String, enum: ['NGN', 'USDT'], required: true },
 
     destination: {
-      // NGN fields
       bankCode: { type: String, trim: true },
       bankName: { type: String, trim: true },
       accountNumber: { type: String, trim: true },
-      resolvedAccountName: { type: String, trim: true }, // from Paystack resolve
+      resolvedAccountName: { type: String, trim: true },
 
-      // USDT fields
       chain: { type: String, enum: ['TRC20', 'BEP20', null], default: null },
       walletAddress: { type: String, trim: true },
 
-      // Normalized value used for the uniqueness index — computed at write time
       normalized: { type: String, required: true },
     },
 
@@ -44,13 +78,11 @@ const claimSchema = new Schema(
       index: true,
     },
 
-    // Guards against double-processing if a background job is retried.
     idempotencyKey: { type: String, required: true, unique: true },
 
-    payoutReference: { type: String, trim: true }, // Paystack transfer_code, or on-chain tx hash
+    payoutReference: { type: String, trim: true },
     failureReason: { type: String, trim: true },
 
-    // Anti-abuse metadata captured at submission time for audit/fraud review.
     meta: {
       ipAddress: { type: String },
       userAgent: { type: String },
@@ -62,10 +94,7 @@ const claimSchema = new Schema(
   { timestamps: true }
 );
 
-// Core anti-duplicate-claim guarantee: one destination can only ever claim once per giveaway.
 claimSchema.index({ giveaway: 1, 'destination.normalized': 1 }, { unique: true });
-
-// Platform-wide restriction lookup
 claimSchema.index({ 'destination.normalized': 1, status: 1 });
 
-module.exports = mongoose.model('Claim', claimSchema);
+export default model<IClaim>('Claim', claimSchema);
