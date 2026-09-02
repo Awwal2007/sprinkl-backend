@@ -297,20 +297,19 @@ export const releaseReservedFundsToAvailable = async (req: AuthRequest, res: Res
     wallet.available += amountToTransfer;
     await wallet.save({ session });
 
-    // Record ledger entry
+    // Record ledger entry with all required schema fields
+    const refId = activeGiveaways[0]?._id || new mongoose.Types.ObjectId();
     await LedgerEntry.create(
       [
         {
           user: userId,
           currency,
-          entryType: 'UNRESERVE',
+          type: 'release',
+          direction: 'credit',
           amount: amountToTransfer,
-          balanceAfter: wallet.available + wallet.reserved,
           referenceType: 'Giveaway',
-          metadata: {
-            reason: 'User transferred reserved funds back to main available balance',
-            closedGiveawaysCount: activeGiveaways.length,
-          },
+          referenceId: refId,
+          balanceAfter: wallet.available + wallet.reserved,
         },
       ],
       { session }
