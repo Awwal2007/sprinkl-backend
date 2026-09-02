@@ -82,9 +82,18 @@ app.get('/api/health/providers', async (req, res) => {
   const mongoose = (await import('mongoose')).default;
   const dbStatus = mongoose.connection.readyState === 1 ? 'CONNECTED' : 'DISCONNECTED';
 
+  let outboundIp = 'Unknown';
+  try {
+    const axios = (await import('axios')).default;
+    const ipRes = await axios.get('https://api.ipify.org?format=json', { timeout: 3500 });
+    outboundIp = ipRes.data?.ip || 'Unknown';
+  } catch {}
+
   res.json({
     serverTime: new Date().toISOString(),
     environment: process.env.NODE_ENV || 'development',
+    serverOutboundIp: outboundIp,
+    flutterwaveIpWhitelistGuide: `Add ${outboundIp} (or 0.0.0.0) in Flutterwave Dashboard -> Settings -> Whitelisted IP addresses`,
     database: {
       status: dbStatus,
     },
