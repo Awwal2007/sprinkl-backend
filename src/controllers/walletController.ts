@@ -82,6 +82,65 @@ export const setupNgnDva = async (req: AuthRequest, res: Response, next: NextFun
   }
 };
 
+export const initializeFlutterwaveDeposit = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { amountNaira } = req.body;
+    const amount = parseFloat(amountNaira);
+    if (!amount || amount < 3000) {
+      return res.status(400).json({ error: 'Minimum deposit is ₦3,000.' });
+    }
+
+    const user = req.user!;
+    const txRef = `DEP_${user._id}_${Date.now()}`;
+    const flwSecret = process.env.FLUTTERWAVE_SECRET_KEY;
+
+    if (!flwSecret) {
+      return res.status(500).json({ error: 'Flutterwave gateway not configured.' });
+    }
+
+    const axios = (await import('axios')).default;
+    const flwRes = await axios.post(
+      'https://api.flutterwave.com/v3/payments',
+      {
+        tx_ref: txRef,
+        amount,
+        currency: 'NGN',
+        redirect_url: `${process.env.DOMAIN || 'https://sprinkl.biz'}/dashboard?funded=true`,
+        customer: {
+          email: user.email,
+          name: user.fullName,
+          phonenumber: user.phone || '08000000000',
+        },
+        customizations: {
+          title: 'Sprinkl Wallet Deposit',
+          description: `Fund ₦${amount.toLocaleString()} into your host balance`,
+        },
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${flwSecret}`,
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+
+    if (flwRes.data && flwRes.data.status === 'success') {
+      return res.json({
+        paymentLink: flwRes.data.data.link,
+      });
+    }
+
+    return res.status(400).json({
+      error: flwRes.data?.message || 'Failed to initialize Flutterwave payment.',
+    });
+  } catch (err: any) {
+    console.error('[Flutterwave Init Error]', err.response?.data || err.message);
+    return res.status(500).json({
+      error: err.response?.data?.message || err.message || 'Payment initialization failed.',
+    });
+  }
+};
+
 export const simulateFundNgn = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { amountNaira } = req.body;
