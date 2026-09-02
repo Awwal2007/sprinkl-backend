@@ -9,7 +9,8 @@ export const handleFlutterwaveWebhook = async (req: Request, res: Response, next
     const secretHash = process.env.FLUTTERWAVE_SECRET_HASH || 'sprinkl_flw_secret_2026';
     const signature = req.headers['verif-hash'];
 
-    if (signature && signature !== secretHash) {
+    if (secretHash && signature !== secretHash) {
+      console.warn('[Flutterwave Webhook] Invalid signature received:', signature);
       return res.status(401).send('Invalid signature');
     }
 
@@ -17,9 +18,17 @@ export const handleFlutterwaveWebhook = async (req: Request, res: Response, next
 
     if (payload.event === 'charge.completed' && payload.data && payload.data.status === 'successful') {
       const { amount, customer, tx_ref } = payload.data;
-      const email = customer.email;
+      const email = customer?.email;
+      const accountNumber = payload.data.account_number || payload.data.account?.account_number;
+      const flwRef = payload.data.flw_ref;
 
-      const user = await User.findOne({ email });
+      // Find user by email or DVA account number or customer reference
+      const queryConditions: any[] = [];
+      if (email) queryConditions.push({ email });
+      if (accountNumber) queryConditions.push({ paystackDvaAccountNumber: accountNumber });
+      if (flwRef) queryConditions.push({ paystackCustomerCode: flwRef });
+
+      const user = queryConditions.length > 0 ? await User.findOne({ $or: queryConditions }) : null;
       if (user) {
         const existingTx = await Transaction.findOne({ provider: 'flutterwave', providerReference: tx_ref });
         if (!existingTx) {
