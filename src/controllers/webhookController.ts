@@ -2,6 +2,8 @@ import { Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
 import User from '../models/User';
 import Transaction from '../models/Transaction';
+import Claim from '../models/Claim';
+import Giveaway from '../models/Giveaway';
 import LedgerService from '../services/ledgerService';
 
 export const handleFlutterwaveWebhook = async (req: Request, res: Response, next: NextFunction) => {
@@ -51,6 +53,43 @@ export const handleFlutterwaveWebhook = async (req: Request, res: Response, next
             referenceType: 'FlutterwaveTransaction',
             referenceId: tx._id,
           });
+        }
+      }
+    }
+
+    if (payload.event === 'transfer.completed' && payload.data) {
+      const { status, reference, complete_message, id } = payload.data;
+      console.log(`[Flutterwave Webhook] Transfer ${id} status: ${status}, ref: ${reference}`);
+
+      // Sanitize reference lookup
+      const claim = await Claim.findOne({
+        $or: [
+          { idempotencyKey: reference },
+          { payoutReference: String(id) },
+          { payoutReference: reference },
+        ],
+      }).populate('giveaway');
+
+      if (claim) {
+        if (status === 'SUCCESSFUL') {
+          claim.status = 'paid';
+          claim.failureReason = undefined;
+          await claim.save();
+        } else if (status === 'FAILED') {
+          claim.status = 'failed';
+          claim.failureReason = complete_message || 'Transfer disbursement failed on Flutterwave';
+          if (claim.destination && claim.destination.normalized) {
+            claim.destination.normalized = `FAILED_${Date.now()}_${claim.destination.normalized}`;
+          }
+          await claim.save();
+
+          // Restore slot on giveaway
+          if (claim.giveaway) {
+            await Giveaway.findByIdAndUpdate(claim.giveaway._id, {
+              $inc: { slotsClaimed: -1, 'stats.failedClaimAttempts': 1 },
+              $set: { status: 'active' },
+            });
+          }
         }
       }
     }

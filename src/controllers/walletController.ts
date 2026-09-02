@@ -1,11 +1,12 @@
 import { Response, NextFunction } from 'express';
+import mongoose from 'mongoose';
 import LedgerService from '../services/ledgerService';
 import LedgerEntry from '../models/LedgerEntry';
+import WalletAccount from '../models/WalletAccount';
 import flutterwaveService from '../services/flutterwaveService';
 import cryptoService from '../services/cryptoService';
 import Transaction from '../models/Transaction';
 import { AuthRequest } from '../middleware/auth';
-
 import Giveaway from '../models/Giveaway';
 
 export const getWallet = async (req: AuthRequest, res: Response, next: NextFunction) => {
@@ -248,5 +249,91 @@ export const simulateFundUsdt = async (req: AuthRequest, res: Response, next: Ne
     });
   } catch (err) {
     next(err);
+  }
+};
+
+export const releaseReservedFundsToAvailable = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    const currency = (req.body.currency || 'NGN').toUpperCase() as 'NGN' | 'USDT';
+    const userId = req.user!._id;
+
+    // 1. Find all active/paused giveaways for this user in this currency and close them
+    const activeGiveaways = await Giveaway.find({
+      host: userId,
+      currency,
+      status: { $in: ['active', 'paused'] },
+    }).session(session);
+
+    let totalCalculatedUnspent = 0;
+
+    for (const g of activeGiveaways) {
+      const unclaimed = Math.max(0, g.totalSlots - g.slotsClaimed);
+      const unspent = unclaimed * g.amountPerRecipient;
+      if (unspent > 0) {
+        totalCalculatedUnspent += unspent;
+      }
+      g.status = 'cancelled';
+      await g.save({ session });
+    }
+
+    // 2. Fetch or initialize the user's wallet
+    let wallet = await WalletAccount.findOne({ user: userId, currency }).session(session);
+    if (!wallet) {
+      wallet = new WalletAccount({ user: userId, currency, available: 0, reserved: 0 });
+    }
+
+    const currentReserved = wallet.reserved || 0;
+    if (currentReserved <= 0) {
+      await session.abortTransaction();
+      return res.status(400).json({ error: `You have no reserved ${currency} funds to transfer.` });
+    }
+
+    // Transfer the reserved funds directly to available
+    const amountToTransfer = currentReserved;
+    wallet.reserved = 0;
+    wallet.available += amountToTransfer;
+    await wallet.save({ session });
+
+    // Record ledger entry
+    await LedgerEntry.create(
+      [
+        {
+          user: userId,
+          currency,
+          entryType: 'UNRESERVE',
+          amount: amountToTransfer,
+          balanceAfter: wallet.available + wallet.reserved,
+          referenceType: 'Giveaway',
+          metadata: {
+            reason: 'User transferred reserved funds back to main available balance',
+            closedGiveawaysCount: activeGiveaways.length,
+          },
+        },
+      ],
+      { session }
+    );
+
+    await session.commitTransaction();
+
+    const formattedAmount =
+      currency === 'NGN'
+        ? `₦${(amountToTransfer / 100).toLocaleString()}`
+        : `${(amountToTransfer / 1000000).toLocaleString()} USDT`;
+
+    return res.json({
+      message: `Successfully transferred ${formattedAmount} back to your main available balance!`,
+      wallet: {
+        available: wallet.available,
+        reserved: wallet.reserved,
+      },
+    });
+  } catch (err) {
+    await session.abortTransaction();
+    next(err);
+  } finally {
+    session.endSession();
   }
 };
