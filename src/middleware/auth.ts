@@ -12,7 +12,7 @@ export const authenticateToken = async (req: AuthRequest, res: Response, next: N
     const token = authHeader && authHeader.split(' ')[1];
 
     if (!token) {
-      return res.status(401).json({ error: 'Access token required' });
+      return res.status(401).json({ error: 'Access token required', code: 'TOKEN_REQUIRED' });
     }
 
     const secret = process.env.JWT_ACCESS_SECRET || 'givehub_jwt_access_secret_sprinkl_2026_super_key';
@@ -20,13 +20,17 @@ export const authenticateToken = async (req: AuthRequest, res: Response, next: N
 
     const user = await User.findById(decoded.userId);
     if (!user) {
-      return res.status(401).json({ error: 'User not found or deactivated' });
+      return res.status(401).json({ error: 'User account not found or deactivated', code: 'USER_NOT_FOUND' });
     }
 
     req.user = user;
     next();
-  } catch (err) {
-    return res.status(403).json({ error: 'Invalid or expired token' });
+  } catch (err: any) {
+    const isExpired = err.name === 'TokenExpiredError';
+    return res.status(401).json({
+      error: isExpired ? 'Session expired. Please sign in again.' : 'Invalid session token.',
+      code: isExpired ? 'TOKEN_EXPIRED' : 'TOKEN_INVALID',
+    });
   }
 };
 

@@ -200,12 +200,12 @@ export const refreshToken = async (req: Request, res: Response, next: NextFuncti
 
     const user = await User.findById(decoded.userId).select('+refreshTokenHash');
     if (!user || !user.refreshTokenHash) {
-      return res.status(403).json({ error: 'Session expired or invalidated' });
+      return res.status(401).json({ error: 'Session expired or invalidated', code: 'SESSION_EXPIRED' });
     }
 
     const isMatch = await bcrypt.compare(token, user.refreshTokenHash);
     if (!isMatch) {
-      return res.status(403).json({ error: 'Invalid refresh token' });
+      return res.status(401).json({ error: 'Invalid refresh token', code: 'REFRESH_TOKEN_INVALID' });
     }
 
     const { accessToken, refreshToken: newRefreshToken } = generateTokens(user._id);
@@ -218,7 +218,7 @@ export const refreshToken = async (req: Request, res: Response, next: NextFuncti
       refreshToken: newRefreshToken,
     });
   } catch (err) {
-    return res.status(403).json({ error: 'Invalid or expired refresh token' });
+    return res.status(401).json({ error: 'Invalid or expired refresh token', code: 'REFRESH_TOKEN_EXPIRED' });
   }
 };
 
