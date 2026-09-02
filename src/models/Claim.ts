@@ -49,7 +49,7 @@ const claimSchema = new Schema<IClaim>(
   {
     giveaway: { type: Schema.Types.ObjectId, ref: 'Giveaway', required: true, index: true },
 
-    claimantName: { type: String, required: true, trim: true, maxlength: 120 },
+    claimantName: { type: String, default: 'Sprinkl Claimant', trim: true, maxlength: 120 },
     claimantContact: {
       email: { type: String, trim: true, lowercase: true },
       phone: { type: String, trim: true },

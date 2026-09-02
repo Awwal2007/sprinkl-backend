@@ -7,8 +7,8 @@ import cryptoService from '../services/cryptoService';
 import PayoutWorker from '../jobs/payoutWorker';
 
 const claimSchema = z.object({
-  claimantName: z.string().min(2).max(120),
-  claimantEmail: z.string().email().optional(),
+  claimantName: z.string().optional(),
+  claimantEmail: z.string().email().optional().or(z.literal('')),
   claimantPhone: z.string().optional(),
   bankCode: z.string().optional(),
   bankName: z.string().optional(),
@@ -178,7 +178,7 @@ export const submitClaim = async (req: Request, res: Response, next: NextFunctio
     try {
       claim = new Claim({
         giveaway: giveaway._id,
-        claimantName: data.claimantName,
+        claimantName: data.claimantName || data.resolvedAccountName || (data.walletAddress ? `${data.chain || 'USDT'} Claimant` : 'Sprinkl Claimant'),
         claimantContact: {
           email: data.claimantEmail || '',
           phone: data.claimantPhone || '',
