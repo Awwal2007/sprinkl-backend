@@ -39,15 +39,52 @@ export const createGiveaway = async (req: AuthRequest, res: Response, next: Next
       amountPerRecipientSmallest = Math.round(data.amountPerRecipient * 1000000);
     }
 
-    // Platform Fee Logic:
-    // First 3 giveaways created by a user qualify for the new creator privilege rate (2.5%).
-    // After 3 giveaways, standard 5% platform fee applies.
+    // A. Minimum Amount Per Winner Check
+    if (data.currency === 'NGN' && data.amountPerRecipient < 500) {
+      await session.abortTransaction();
+      return res.status(400).json({
+        error: 'Minimum payout per winner is ₦500 NGN to ensure transfer costs are fully covered.',
+      });
+    }
+    if (data.currency === 'USDT' && data.amountPerRecipient < 2) {
+      await session.abortTransaction();
+      return res.status(400).json({
+        error: 'Minimum payout per winner is $2 USDT to cover blockchain transfer gas.',
+      });
+    }
+
+    // B. Platform Fee & Whale Tier Logic
+    // - New Creator Privilege: First 3 giveaways charged only 2.5% (floor: ₦250 / $0.50 USDT)
+    // - Standard: 5.0% (floor: ₦500 / $1.00 USDT)
+    // - Whale Tier: >= ₦1,000,000 ($1,000 USDT) drops fee to 3.0%, capped at ₦35,000 ($35 USDT max)
     const pastGiveawaysCount = await Giveaway.countDocuments({ host: userId }).session(session);
     const isPromo = pastGiveawaysCount < 3;
-    const feeRate = isPromo ? 0.025 : 0.05;
+    let feeRate = isPromo ? 0.025 : 0.05;
 
     const giftPoolSmallest = amountPerRecipientSmallest * data.totalSlots;
-    const platformFee = Math.round(giftPoolSmallest * feeRate);
+    let minFee = 0;
+    let maxFee = Infinity;
+    let isWhaleTier = false;
+
+    if (data.currency === 'NGN') {
+      minFee = isPromo ? 25000 : 50000; // ₦250 or ₦500 floor
+      if (giftPoolSmallest >= 100000000) { // >= ₦1,000,000
+        isWhaleTier = true;
+        feeRate = 0.03;
+        maxFee = 3500000; // Capped at ₦35,000 max
+      }
+    } else {
+      minFee = isPromo ? 500000 : 1000000; // $0.50 or $1.00 USDT floor
+      if (giftPoolSmallest >= 1000000000) { // >= $1,000 USDT
+        isWhaleTier = true;
+        feeRate = 0.03;
+        maxFee = 35000000; // Capped at $35 USDT max
+      }
+    }
+
+    let platformFee = Math.round(giftPoolSmallest * feeRate);
+    platformFee = Math.max(minFee, platformFee);
+    platformFee = Math.min(maxFee, platformFee);
     const totalRequired = giftPoolSmallest + platformFee;
 
     // Check host's available balance
@@ -56,7 +93,7 @@ export const createGiveaway = async (req: AuthRequest, res: Response, next: Next
       await session.abortTransaction();
       const factor = data.currency === 'NGN' ? 100 : 1000000;
       return res.status(400).json({
-        error: `Insufficient ${data.currency} balance. Total required: ${(totalRequired / factor).toLocaleString()} (Gift: ${(giftPoolSmallest / factor).toLocaleString()} + ${feeRate * 100}% Fee: ${(platformFee / factor).toLocaleString()}), Available: ${(wallet.available / factor).toLocaleString()}`,
+        error: `Insufficient ${data.currency} balance. Total required: ${(totalRequired / factor).toLocaleString()} (Gift: ${(giftPoolSmallest / factor).toLocaleString()} + Fee: ${(platformFee / factor).toLocaleString()}), Available: ${(wallet.available / factor).toLocaleString()}`,
       });
     }
 
@@ -121,6 +158,7 @@ export const createGiveaway = async (req: AuthRequest, res: Response, next: Next
         platformFee: giveaway.platformFee,
         feeRatePercent: feeRate * 100,
         isPromo,
+        isWhaleTier,
         status: giveaway.status,
         publicUrl: `${process.env.DOMAIN || 'https://sprinkl.biz'}/g/${giveaway.slug}`,
       },
