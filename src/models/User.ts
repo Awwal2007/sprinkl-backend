@@ -14,6 +14,10 @@ export interface IUser extends Document {
   passwordHash: string;
   role: 'host' | 'admin';
   emailVerified: boolean;
+  verificationToken?: string;
+  verificationTokenExpires?: Date;
+  passwordResetToken?: string;
+  passwordResetExpires?: Date;
   kyc: {
     status: 'none' | 'pending' | 'verified' | 'rejected';
     payoutReviewThreshold: number;
@@ -48,6 +52,10 @@ const userSchema = new Schema<IUser>(
     },
 
     emailVerified: { type: Boolean, default: false },
+    verificationToken: { type: String, select: false },
+    verificationTokenExpires: { type: Date, select: false },
+    passwordResetToken: { type: String, select: false },
+    passwordResetExpires: { type: Date, select: false },
 
     kyc: {
       status: {

@@ -5,10 +5,13 @@ import { z } from 'zod';
 import User from '../models/User';
 import { AuthRequest } from '../middleware/auth';
 
+import crypto from 'crypto';
+import emailService from '../services/emailService';
+
 const signupSchema = z.object({
   fullName: z.string().min(2).max(120),
   email: z.string().email(),
-  password: z.string().min(6),
+  password: z.string().min(8, 'Password must be at least 8 characters'),
   phone: z.string().optional(),
 });
 
@@ -39,12 +42,19 @@ export const signup = async (req: Request, res: Response, next: NextFunction) =>
     const salt = await bcrypt.genSalt(10);
     const passwordHash = await bcrypt.hash(data.password, salt);
 
+    // Generate secure 32-byte hexadecimal email verification token
+    const verificationToken = crypto.randomBytes(32).toString('hex');
+    const verificationTokenExpires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+
     const user = new User({
       fullName: data.fullName,
       email: data.email.toLowerCase(),
       phone: data.phone || '',
       passwordHash,
       role: 'host',
+      emailVerified: false,
+      verificationToken,
+      verificationTokenExpires,
       kyc: {
         status: 'verified',
         payoutReviewThreshold: parseInt(process.env.DEFAULT_KYC_PAYOUT_REVIEW_THRESHOLD || '500000', 10),
@@ -53,13 +63,16 @@ export const signup = async (req: Request, res: Response, next: NextFunction) =>
 
     await user.save();
 
+    // Send verification email via Resend
+    await emailService.sendVerificationEmail(user.email, user.fullName, verificationToken);
+
     const { accessToken, refreshToken } = generateTokens(user._id);
 
     user.refreshTokenHash = await bcrypt.hash(refreshToken, 10);
     await user.save();
 
     return res.status(201).json({
-      message: 'Signup successful',
+      message: 'Signup successful! Please check your email to verify your account.',
       accessToken,
       refreshToken,
       user: {
@@ -68,6 +81,7 @@ export const signup = async (req: Request, res: Response, next: NextFunction) =>
         email: user.email,
         phone: user.phone,
         role: user.role,
+        emailVerified: user.emailVerified,
         kyc: user.kyc,
       },
     });
@@ -75,6 +89,60 @@ export const signup = async (req: Request, res: Response, next: NextFunction) =>
     if (err.name === 'ZodError') {
       return res.status(400).json({ error: err.errors[0].message });
     }
+    next(err);
+  }
+};
+
+export const verifyEmail = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { token } = req.body;
+    if (!token) {
+      return res.status(400).json({ error: 'Verification token is required' });
+    }
+
+    const user = await User.findOne({
+      verificationToken: token,
+      verificationTokenExpires: { $gt: new Date() },
+    }).select('+verificationToken +verificationTokenExpires');
+
+    if (!user) {
+      return res.status(400).json({ error: 'Invalid or expired email verification link' });
+    }
+
+    user.emailVerified = true;
+    user.verificationToken = undefined;
+    user.verificationTokenExpires = undefined;
+    await user.save();
+
+    return res.json({
+      message: 'Email successfully verified! Your host account is active.',
+      emailVerified: true,
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const resendVerificationEmail = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const user = await User.findById(req.user!._id);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    if (user.emailVerified) {
+      return res.status(400).json({ error: 'Email is already verified' });
+    }
+
+    const verificationToken = crypto.randomBytes(32).toString('hex');
+    user.verificationToken = verificationToken;
+    user.verificationTokenExpires = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    await user.save();
+
+    await emailService.sendVerificationEmail(user.email, user.fullName, verificationToken);
+
+    return res.json({ message: 'Verification email has been sent!' });
+  } catch (err) {
     next(err);
   }
 };
@@ -108,6 +176,7 @@ export const login = async (req: Request, res: Response, next: NextFunction) => 
         email: user.email,
         phone: user.phone,
         role: user.role,
+        emailVerified: user.emailVerified,
         kyc: user.kyc,
       },
     });
@@ -116,6 +185,40 @@ export const login = async (req: Request, res: Response, next: NextFunction) => 
       return res.status(400).json({ error: err.errors[0].message });
     }
     next(err);
+  }
+};
+
+export const refreshToken = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { refreshToken: token } = req.body;
+    if (!token) {
+      return res.status(401).json({ error: 'Refresh token required' });
+    }
+
+    const refreshSecret = process.env.JWT_REFRESH_SECRET || 'givehub_jwt_refresh_secret_sprinkl_2026_super_key';
+    const decoded = jwt.verify(token, refreshSecret) as { userId: string };
+
+    const user = await User.findById(decoded.userId).select('+refreshTokenHash');
+    if (!user || !user.refreshTokenHash) {
+      return res.status(403).json({ error: 'Session expired or invalidated' });
+    }
+
+    const isMatch = await bcrypt.compare(token, user.refreshTokenHash);
+    if (!isMatch) {
+      return res.status(403).json({ error: 'Invalid refresh token' });
+    }
+
+    const { accessToken, refreshToken: newRefreshToken } = generateTokens(user._id);
+
+    user.refreshTokenHash = await bcrypt.hash(newRefreshToken, 10);
+    await user.save();
+
+    return res.json({
+      accessToken,
+      refreshToken: newRefreshToken,
+    });
+  } catch (err) {
+    return res.status(403).json({ error: 'Invalid or expired refresh token' });
   }
 };
 
@@ -131,6 +234,7 @@ export const me = async (req: AuthRequest, res: Response) => {
       email: req.user.email,
       phone: req.user.phone,
       role: req.user.role,
+      emailVerified: req.user.emailVerified,
       kyc: req.user.kyc,
       paystackDvaAccountNumber: req.user.paystackDvaAccountNumber,
       paystackDvaBankName: req.user.paystackDvaBankName,

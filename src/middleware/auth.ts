@@ -30,6 +30,16 @@ export const authenticateToken = async (req: AuthRequest, res: Response, next: N
   }
 };
 
+export const requireVerifiedEmail = (req: AuthRequest, res: Response, next: NextFunction) => {
+  if (req.user && req.user.emailVerified) {
+    return next();
+  }
+  return res.status(403).json({
+    error: 'Please verify your email address to access this feature.',
+    emailVerified: false,
+  });
+};
+
 export const requireAdmin = (req: AuthRequest, res: Response, next: NextFunction) => {
   if (req.user && req.user.role === 'admin') {
     return next();
