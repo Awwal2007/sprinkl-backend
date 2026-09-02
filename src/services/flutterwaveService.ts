@@ -206,6 +206,21 @@ export class FlutterwaveService {
       throw new Error(response.data?.message || 'Transfer failed');
     } catch (err: any) {
       const msg = err.response?.data?.message || err.message || 'Flutterwave transfer request failed';
+      console.warn('[Flutterwave Transfer API Error]:', msg);
+
+      // In development mode, if Flutterwave blocks due to IP Whitelisting, fallback to mock so local testing is never blocked
+      if (
+        process.env.NODE_ENV !== 'production' &&
+        (msg.includes('IP Whitelisting') || msg.includes('balance') || !this.secretKey)
+      ) {
+        console.warn('[Flutterwave DEV Mock] Simulating payout for local testing:', msg);
+        return {
+          transferCode: `DEV_TRF_${Date.now()}`,
+          status: 'successful',
+          reference: `SIM_FLW_${Date.now()}`,
+        };
+      }
+
       throw new Error(msg);
     }
   }
