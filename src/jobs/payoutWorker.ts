@@ -93,10 +93,16 @@ export class PayoutWorker {
 
       claim.status = 'failed';
       claim.failureReason = err.message;
+      // Free the destination uniqueness lock so claimant can retry
+      if (claim.destination && claim.destination.normalized) {
+        claim.destination.normalized = `FAILED_${Date.now()}_${claim.destination.normalized}`;
+      }
       await claim.save();
 
+      // Return the slot to the giveaway so 1 slot is NOT permanently lost
       await Giveaway.findByIdAndUpdate(giveaway._id, {
-        $inc: { 'stats.failedClaimAttempts': 1 },
+        $inc: { slotsClaimed: -1, 'stats.failedClaimAttempts': 1 },
+        $set: { status: 'active' },
       });
 
       throw err;
