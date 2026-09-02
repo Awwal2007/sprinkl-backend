@@ -1,10 +1,21 @@
 import TronWeb from 'tronweb';
+import { ethers } from 'ethers';
 
 // USDT TRC20 Contract address on Tron mainnet
 const USDT_TRC20_CONTRACT = 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t';
 
-// USDT decimals for TRC20 is 6
-const USDT_DECIMALS = 6;
+// USDT BEP20 Contract address on BSC mainnet
+const USDT_BEP20_CONTRACT = '0x55d398326f99059fF775485246999027B3197955';
+
+// BSC Mainnet RPC
+const BSC_RPC_URL = 'https://bsc-dataseed1.binance.org/';
+
+// ERC20/BEP20 minimal ABI for transfer
+const ERC20_ABI = [
+  'function transfer(address to, uint256 amount) returns (bool)',
+  'function decimals() view returns (uint8)',
+  'function balanceOf(address owner) view returns (uint256)',
+];
 
 export class CryptoService {
   static validateAddress(address: string, chain: 'TRC20' | 'BEP20' = 'TRC20'): boolean {
@@ -48,24 +59,123 @@ export class CryptoService {
     }
   }
 
+  // ─── TRC20 HELPERS ──────────────────────────────────────────────────
   private static getTronWeb(): TronWeb {
     const privateKey = process.env.TRON_HOT_WALLET_PRIVATE_KEY;
-    const fullHost = 'https://api.trongrid.io';
-    const apiKey = process.env.TRON_GRID_API_KEY;
-
     if (!privateKey) {
       throw new Error('TRON_HOT_WALLET_PRIVATE_KEY is not configured in .env');
     }
 
     const tronWeb = new TronWeb({
-      fullHost,
-      headers: apiKey ? { 'TRON-PRO-API-KEY': apiKey } : {},
+      fullHost: 'https://api.trongrid.io',
+      headers: process.env.TRON_GRID_API_KEY
+        ? { 'TRON-PRO-API-KEY': process.env.TRON_GRID_API_KEY }
+        : {},
       privateKey,
     });
 
     return tronWeb;
   }
 
+  private static async sendTrc20Usdt(toAddress: string, amountSmallestUnit: number) {
+    const tronWeb = this.getTronWeb();
+    const rawAmount = Math.floor(amountSmallestUnit);
+
+    if (rawAmount <= 0) {
+      throw new Error(`Invalid USDT amount to send: ${rawAmount}`);
+    }
+
+    try {
+      const contract = await tronWeb.contract().at(USDT_TRC20_CONTRACT);
+
+      const txId = await contract.transfer(toAddress, rawAmount).send({
+        feeLimit: 100_000_000, // 100 TRX fee limit for energy/bandwidth
+        callValue: 0,
+        shouldPollResponse: false,
+      });
+
+      if (!txId) {
+        throw new Error('Tron transfer returned no transaction ID');
+      }
+
+      console.log(`[CryptoService] TRC20 USDT sent. TxID: ${txId}, amount: ${rawAmount}, to: ${toAddress}`);
+
+      return {
+        success: true,
+        txHash: txId as string,
+        chain: 'TRC20' as const,
+        amount: rawAmount,
+        destination: toAddress,
+        explorerUrl: `https://tronscan.org/#/transaction/${txId}`,
+      };
+    } catch (err: any) {
+      const msg = err?.message || String(err);
+      console.error(`[CryptoService] TRC20 USDT send failed: ${msg}`);
+      throw new Error(`TRC20 USDT transfer failed: ${msg}`);
+    }
+  }
+
+  // ─── BEP20 HELPERS ──────────────────────────────────────────────────
+  private static getBscWallet(): ethers.Wallet {
+    const privateKey = process.env.BSC_HOT_WALLET_PRIVATE_KEY;
+    if (!privateKey || privateKey === 'YOUR_BSC_PRIVATE_KEY_HERE') {
+      throw new Error(
+        'BSC_HOT_WALLET_PRIVATE_KEY is not configured in .env. Set the private key of your BSC hot wallet to enable BEP20 payouts.'
+      );
+    }
+
+    const provider = new ethers.JsonRpcProvider(BSC_RPC_URL);
+    const wallet = new ethers.Wallet(
+      privateKey.startsWith('0x') ? privateKey : `0x${privateKey}`,
+      provider
+    );
+    return wallet;
+  }
+
+  private static async sendBep20Usdt(toAddress: string, amountSmallestUnit: number) {
+    const wallet = this.getBscWallet();
+    const rawAmount = BigInt(Math.floor(amountSmallestUnit));
+
+    if (rawAmount <= 0n) {
+      throw new Error(`Invalid USDT amount to send: ${rawAmount}`);
+    }
+
+    try {
+      const contract = new ethers.Contract(USDT_BEP20_CONTRACT, ERC20_ABI, wallet);
+
+      // Check hot wallet USDT balance first
+      const balance: bigint = await contract.balanceOf(wallet.address);
+      if (balance < rawAmount) {
+        const balanceReadable = ethers.formatUnits(balance, 18);
+        const neededReadable = ethers.formatUnits(rawAmount, 18);
+        throw new Error(
+          `BSC hot wallet has insufficient USDT balance. Has: ${balanceReadable} USDT, needs: ${neededReadable} USDT. Fund ${wallet.address} on BSC.`
+        );
+      }
+
+      // Estimate gas then send
+      const tx = await contract.transfer(toAddress, rawAmount, {
+        gasLimit: 100_000n,
+      });
+
+      console.log(`[CryptoService] BEP20 USDT sent. TxHash: ${tx.hash}, amount: ${rawAmount}, to: ${toAddress}`);
+
+      return {
+        success: true,
+        txHash: tx.hash as string,
+        chain: 'BEP20' as const,
+        amount: Number(rawAmount),
+        destination: toAddress,
+        explorerUrl: `https://bscscan.com/tx/${tx.hash}`,
+      };
+    } catch (err: any) {
+      const msg = err?.message || String(err);
+      console.error(`[CryptoService] BEP20 USDT send failed: ${msg}`);
+      throw new Error(`BEP20 USDT transfer failed: ${msg}`);
+    }
+  }
+
+  // ─── PUBLIC PAYOUT ENTRY POINT ──────────────────────────────────────
   static async sendUsdtPayout({
     destinationAddress,
     amountUsdtInteger,
@@ -82,61 +192,12 @@ export class CryptoService {
     }
 
     if (chain === 'TRC20') {
-      return await this.sendTrc20Usdt(destinationAddress, amountUsdtInteger, reference);
+      return await this.sendTrc20Usdt(destinationAddress, amountUsdtInteger);
     } else if (chain === 'BEP20') {
-      // BSC payouts: not yet implemented — requires ethers.js and BSC hot wallet setup
-      throw new Error(
-        'BEP20 USDT payouts are not yet configured. Please use TRC20 giveaways or contact support.'
-      );
+      return await this.sendBep20Usdt(destinationAddress, amountUsdtInteger);
     }
 
     throw new Error(`Unsupported chain: ${chain}`);
-  }
-
-  private static async sendTrc20Usdt(
-    toAddress: string,
-    amountUsdtSmallestUnit: number,
-    reference?: string
-  ) {
-    const tronWeb = this.getTronWeb();
-
-    // The amount passed in is already in the 6-decimal format (e.g. 1 USDT = 1,000,000)
-    const rawAmount = Math.floor(amountUsdtSmallestUnit);
-
-    if (rawAmount <= 0) {
-      throw new Error(`Invalid USDT amount to send: ${rawAmount}`);
-    }
-
-    try {
-      // Get the TRC20 contract instance
-      const contract = await tronWeb.contract().at(USDT_TRC20_CONTRACT);
-
-      // Call the ERC20/TRC20 transfer function
-      const txId = await contract.transfer(toAddress, rawAmount).send({
-        feeLimit: 100_000_000, // 100 TRX fee limit for energy/bandwidth
-        callValue: 0,
-        shouldPollResponse: false,
-      });
-
-      if (!txId) {
-        throw new Error('Tron transfer returned no transaction ID');
-      }
-
-      console.log(`[CryptoService] TRC20 USDT sent. TxID: ${txId}, amount: ${rawAmount}, to: ${toAddress}`);
-
-      return {
-        success: true,
-        txHash: txId,
-        chain: 'TRC20' as const,
-        amount: rawAmount,
-        destination: toAddress,
-        explorerUrl: `https://tronscan.org/#/transaction/${txId}`,
-      };
-    } catch (err: any) {
-      const msg = err?.message || String(err);
-      console.error(`[CryptoService] TRC20 USDT send failed: ${msg}`);
-      throw new Error(`TRC20 USDT transfer failed: ${msg}`);
-    }
   }
 }
 
