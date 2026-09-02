@@ -191,17 +191,30 @@ export const getUsdtDepositAddress = async (req: AuthRequest, res: Response, nex
     const { chain = 'TRC20' } = req.body;
     const user = req.user!;
 
-    let existing = user.cryptoDepositAddresses.find((a) => a.chain === chain);
+    // Always derive from configured hot wallet — never serve stale cached fake addresses
+    let address: string;
+    try {
+      address = cryptoService.generateDepositAddress(user._id.toString(), chain);
+    } catch (configErr: any) {
+      return res.status(503).json({
+        error: `${chain} deposits are currently unavailable: ${configErr.message}`,
+      });
+    }
+
+    // Persist so we have a record, but always override with the real env address
+    const existing = user.cryptoDepositAddresses.find((a) => a.chain === chain);
     if (!existing) {
-      const address = cryptoService.generateDepositAddress(user._id.toString(), chain);
       user.cryptoDepositAddresses.push({ chain, address, createdAt: new Date() });
       await user.save();
-      existing = { chain, address, createdAt: new Date() };
+    } else if (existing.address !== address) {
+      // Update stale/fake cached address
+      existing.address = address;
+      await user.save();
     }
 
     return res.json({
-      chain: existing.chain,
-      address: existing.address,
+      chain,
+      address,
     });
   } catch (err) {
     next(err);

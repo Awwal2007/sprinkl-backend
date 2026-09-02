@@ -22,11 +22,21 @@ export class CryptoService {
 
   static generateDepositAddress(userId: string, chain: 'TRC20' | 'BEP20' = 'TRC20'): string {
     if (chain === 'TRC20') {
-      const sample = 'TYv1k' + userId.toString().slice(-6) + 'Wz9XqJzV5vK8xQZ9wY1mN';
-      return sample.padEnd(34, 'X');
+      const addr = process.env.TRON_HOT_WALLET_ADDRESS;
+      if (!addr || !this.validateAddress(addr, 'TRC20')) {
+        throw new Error(
+          'TRON hot wallet address is not configured or invalid. Set TRON_HOT_WALLET_ADDRESS in .env before accepting crypto deposits.'
+        );
+      }
+      return addr;
     } else {
-      const sample = '0x' + userId.toString().padEnd(40, 'a');
-      return sample.slice(0, 42);
+      const addr = process.env.BSC_HOT_WALLET_ADDRESS;
+      if (!addr || !this.validateAddress(addr, 'BEP20')) {
+        throw new Error(
+          'BSC hot wallet address is not configured or invalid. Set BSC_HOT_WALLET_ADDRESS in .env before accepting BEP20 deposits.'
+        );
+      }
+      return addr;
     }
   }
 
