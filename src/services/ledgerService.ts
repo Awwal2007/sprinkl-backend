@@ -24,6 +24,13 @@ export interface IPayoutParams {
   claimId: Types.ObjectId | string;
 }
 
+export interface IDeductFeeParams {
+  userId: Types.ObjectId | string;
+  currency: 'NGN' | 'USDT';
+  amount: number;
+  giveawayId: Types.ObjectId | string;
+}
+
 export class LedgerService {
   /**
    * Get or create a WalletAccount for a user & currency
@@ -112,6 +119,53 @@ export class LedgerService {
         user: params.userId,
         currency: params.currency,
         type: 'reserve' as LedgerEntryType,
+        amount: params.amount,
+        direction: 'debit',
+        referenceType: 'Giveaway',
+        referenceId: params.giveawayId,
+        balanceAfter: wallet.available + wallet.reserved,
+      });
+
+      await ledgerEntry.save({ session });
+
+      if (isLocalSession) await session.commitTransaction();
+      return wallet;
+    } catch (err) {
+      if (isLocalSession) await session.abortTransaction();
+      throw err;
+    } finally {
+      if (isLocalSession) session.endSession();
+    }
+  }
+
+  /**
+   * Deduct platform fee directly from host's available balance upon giveaway creation
+   */
+  static async deductPlatformFee(
+    params: IDeductFeeParams,
+    externalSession: ClientSession | null = null
+  ): Promise<IWalletAccount> {
+    const session = externalSession || (await mongoose.startSession());
+    const isLocalSession = !externalSession;
+    if (isLocalSession) session.startTransaction();
+
+    try {
+      const wallet = await this.getOrCreateWallet(params.userId, params.currency, session);
+
+      if (wallet.available < params.amount) {
+        throw new Error(
+          `Insufficient ${params.currency} balance for platform fee. Required: ${params.amount}, Available: ${wallet.available}`
+        );
+      }
+
+      wallet.available -= params.amount;
+      wallet.version += 1;
+      await wallet.save({ session });
+
+      const ledgerEntry = new LedgerEntry({
+        user: params.userId,
+        currency: params.currency,
+        type: 'platform_fee' as LedgerEntryType,
         amount: params.amount,
         direction: 'debit',
         referenceType: 'Giveaway',

@@ -2,6 +2,8 @@ import { Request, Response, NextFunction } from 'express';
 import Transaction from '../models/Transaction';
 import User from '../models/User';
 import Claim from '../models/Claim';
+import LedgerEntry from '../models/LedgerEntry';
+import Giveaway from '../models/Giveaway';
 
 export const getTransactions = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -62,3 +64,36 @@ export const getFlaggedAccounts = async (req: Request, res: Response, next: Next
     next(err);
   }
 };
+
+export const getRevenueStats = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const revenueEntries = await LedgerEntry.aggregate([
+      { $match: { type: 'platform_fee', direction: 'debit' } },
+      { $group: { _id: '$currency', totalRevenue: { $sum: '$amount' }, count: { $sum: 1 } } },
+    ]);
+
+    let totalNgnRevenue = 0;
+    let totalUsdtRevenue = 0;
+    revenueEntries.forEach((r) => {
+      if (r._id === 'NGN') totalNgnRevenue = r.totalRevenue;
+      if (r._id === 'USDT') totalUsdtRevenue = r.totalRevenue;
+    });
+
+    const totalGiveaways = await Giveaway.countDocuments();
+    const activeGiveaways = await Giveaway.countDocuments({ status: 'active' });
+
+    return res.json({
+      revenue: {
+        NGN: totalNgnRevenue,
+        USDT: totalUsdtRevenue,
+      },
+      stats: {
+        totalGiveaways,
+        activeGiveaways,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+

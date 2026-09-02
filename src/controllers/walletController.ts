@@ -6,12 +6,19 @@ import cryptoService from '../services/cryptoService';
 import Transaction from '../models/Transaction';
 import { AuthRequest } from '../middleware/auth';
 
+import Giveaway from '../models/Giveaway';
+
 export const getWallet = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const userId = req.user!._id;
 
     const ngnWallet = await LedgerService.getOrCreateWallet(userId, 'NGN');
     const usdtWallet = await LedgerService.getOrCreateWallet(userId, 'USDT');
+
+    const giveawayCount = await Giveaway.countDocuments({ host: userId });
+    const isPromo = giveawayCount < 3;
+    const remainingPromoCount = Math.max(0, 3 - giveawayCount);
+    const feePercentage = isPromo ? 2.5 : 5.0;
 
     const ledgerHistory = await LedgerEntry.find({ user: userId })
       .sort({ createdAt: -1 })
@@ -29,6 +36,12 @@ export const getWallet = async (req: AuthRequest, res: Response, next: NextFunct
           reserved: usdtWallet.reserved,
           total: usdtWallet.available + usdtWallet.reserved,
         },
+      },
+      feeTier: {
+        giveawayCount,
+        isPromo,
+        remainingPromoCount,
+        feePercentage,
       },
       dva: {
         accountNumber: req.user!.paystackDvaAccountNumber,

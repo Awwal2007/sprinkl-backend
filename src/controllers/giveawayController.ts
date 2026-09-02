@@ -39,21 +39,53 @@ export const createGiveaway = async (req: AuthRequest, res: Response, next: Next
       amountPerRecipientSmallest = Math.round(data.amountPerRecipient * 1000000);
     }
 
-    const platformFee = 0;
-    const totalReservedAmount = amountPerRecipientSmallest * data.totalSlots + platformFee;
+    // Platform Fee Logic:
+    // First 3 giveaways created by a user qualify for the new creator privilege rate (2.5%).
+    // After 3 giveaways, standard 5% platform fee applies.
+    const pastGiveawaysCount = await Giveaway.countDocuments({ host: userId }).session(session);
+    const isPromo = pastGiveawaysCount < 3;
+    const feeRate = isPromo ? 0.025 : 0.05;
+
+    const giftPoolSmallest = amountPerRecipientSmallest * data.totalSlots;
+    const platformFee = Math.round(giftPoolSmallest * feeRate);
+    const totalRequired = giftPoolSmallest + platformFee;
+
+    // Check host's available balance
+    const wallet = await LedgerService.getOrCreateWallet(userId, data.currency, session);
+    if (wallet.available < totalRequired) {
+      await session.abortTransaction();
+      const factor = data.currency === 'NGN' ? 100 : 1000000;
+      return res.status(400).json({
+        error: `Insufficient ${data.currency} balance. Total required: ${(totalRequired / factor).toLocaleString()} (Gift: ${(giftPoolSmallest / factor).toLocaleString()} + ${feeRate * 100}% Fee: ${(platformFee / factor).toLocaleString()}), Available: ${(wallet.available / factor).toLocaleString()}`,
+      });
+    }
 
     const slug = nanoid(10);
     const giveawayIdPlaceholder = new mongoose.Types.ObjectId();
 
+    // 1. Reserve exact gift pool for claimant payouts
     await LedgerService.reserveForGiveaway(
       {
         userId,
         currency: data.currency,
-        amount: totalReservedAmount,
+        amount: giftPoolSmallest,
         giveawayId: giveawayIdPlaceholder,
       },
       session
     );
+
+    // 2. Collect platform fee from available balance
+    if (platformFee > 0) {
+      await LedgerService.deductPlatformFee(
+        {
+          userId,
+          currency: data.currency,
+          amount: platformFee,
+          giveawayId: giveawayIdPlaceholder,
+        },
+        session
+      );
+    }
 
     const giveaway = new Giveaway({
       _id: giveawayIdPlaceholder,
@@ -65,7 +97,7 @@ export const createGiveaway = async (req: AuthRequest, res: Response, next: Next
       currency: data.currency,
       amountPerRecipient: amountPerRecipientSmallest,
       totalSlots: data.totalSlots,
-      totalReservedAmount,
+      totalReservedAmount: giftPoolSmallest,
       platformFee,
       status: 'active',
       expiresAt: data.expiresAt ? new Date(data.expiresAt) : null,
@@ -86,6 +118,9 @@ export const createGiveaway = async (req: AuthRequest, res: Response, next: Next
         amountPerRecipient: data.amountPerRecipient,
         totalSlots: giveaway.totalSlots,
         totalReservedAmount: giveaway.totalReservedAmount,
+        platformFee: giveaway.platformFee,
+        feeRatePercent: feeRate * 100,
+        isPromo,
         status: giveaway.status,
         publicUrl: `${process.env.DOMAIN || 'https://sprinkl.biz'}/g/${giveaway.slug}`,
       },

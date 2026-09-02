@@ -8,5 +8,6 @@ router.use(authenticateToken as any, requireAdmin as any);
 
 router.get('/transactions', adminController.getTransactions);
 router.get('/flags', adminController.getFlaggedAccounts);
+router.get('/revenue', adminController.getRevenueStats);
 
 export default router;
