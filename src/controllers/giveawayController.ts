@@ -46,10 +46,10 @@ export const createGiveaway = async (req: AuthRequest, res: Response, next: Next
         error: 'Minimum payout per winner is ₦500 NGN to ensure transfer costs are fully covered.',
       });
     }
-    if (data.currency === 'USDT' && data.amountPerRecipient < 2) {
+    if (data.currency === 'USDT' && data.amountPerRecipient < 0.2) {
       await session.abortTransaction();
       return res.status(400).json({
-        error: 'Minimum payout per winner is $2 USDT to cover blockchain transfer gas.',
+        error: 'Minimum payout per winner is $0.20 USDT to cover blockchain transfer gas.',
       });
     }
 

@@ -61,6 +61,9 @@ export const setupNgnDva = async (req: AuthRequest, res: Response, next: NextFun
 
     if (!user.paystackDvaAccountNumber) {
       const dvaInfo = await flutterwaveService.createVirtualAccount(user);
+      if (!dvaInfo) {
+        return res.status(502).json({ error: 'Could not create dedicated bank account. Please try again.' });
+      }
       user.paystackDvaAccountNumber = dvaInfo.accountNumber;
       user.paystackDvaBankName = dvaInfo.bankName;
       user.paystackCustomerCode = dvaInfo.flwRef;
@@ -84,6 +87,9 @@ export const simulateFundNgn = async (req: AuthRequest, res: Response, next: Nex
     const { amountNaira } = req.body;
     if (!amountNaira || amountNaira <= 0) {
       return res.status(400).json({ error: 'Amount in Naira must be greater than 0' });
+    }
+    if (amountNaira < 3000) {
+      return res.status(400).json({ error: 'Minimum NGN deposit is ₦3,000.' });
     }
 
     const amountKobo = Math.round(amountNaira * 100);
@@ -147,6 +153,9 @@ export const simulateFundUsdt = async (req: AuthRequest, res: Response, next: Ne
     const { amountUsdt, chain = 'TRC20' } = req.body;
     if (!amountUsdt || amountUsdt <= 0) {
       return res.status(400).json({ error: 'USDT amount must be greater than 0' });
+    }
+    if (amountUsdt < 2) {
+      return res.status(400).json({ error: 'Minimum USDT deposit is $2.' });
     }
 
     const amountUnits = Math.round(amountUsdt * 1000000);

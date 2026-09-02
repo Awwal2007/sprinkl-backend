@@ -23,6 +23,10 @@ app.use(
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true }));
 
+app.get('/', (req, res) => {
+  res.send("Welcome to Sprinkl Api V1.00");
+});
+
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',

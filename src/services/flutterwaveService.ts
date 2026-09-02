@@ -126,7 +126,7 @@ export class FlutterwaveService {
     }
   }
 
-  async createVirtualAccount(user: IUser) {
+  async createVirtualAccount(user: IUser): Promise<{ accountNumber: string; bankName: string; flwRef: string }> {
     try {
       const names = (user.fullName || 'Host User').trim().split(' ');
       const firstname = names[0] || 'Sprinkl';
@@ -154,15 +154,27 @@ export class FlutterwaveService {
           flwRef: d.flw_ref,
         };
       }
-    } catch (err: any) {
-      console.warn('[FlutterwaveService] Virtual account fallback:', err.response?.data || err.message);
-    }
 
-    return {
-      accountNumber: '99' + Math.floor(10000000 + Math.random() * 90000000),
-      bankName: 'Wema Bank (Sprinkl DVA)',
-      flwRef: 'FLW_VA_' + user._id,
-    };
+      // Flutterwave responded but status was not 'success'
+      throw new Error(response.data?.message || 'Flutterwave virtual account creation returned unexpected status');
+    } catch (err: any) {
+      const msg = err.response?.data?.message || err.response?.data || err.message;
+      console.warn('[FlutterwaveService] Virtual account creation failed:', msg);
+
+      // In production, surface the real error so the user sees a proper message
+      if (process.env.NODE_ENV === 'production') {
+        throw new Error(
+          'Could not create your dedicated bank account. Please try again later.'
+        );
+      }
+
+      // Dev/test fallback — fake account for local sandbox testing only
+      return {
+        accountNumber: '99' + Math.floor(10000000 + Math.random() * 90000000),
+        bankName: 'Wema Bank (Sprinkl DVA — DEV MOCK)',
+        flwRef: 'FLW_VA_' + user._id,
+      };
+    }
   }
 
   async initiateTransfer(params: ITransferParams): Promise<ITransferResult> {
