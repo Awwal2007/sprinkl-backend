@@ -169,7 +169,7 @@ export const simulateFundNgn = async (req: AuthRequest, res: Response, next: Nex
       userId: req.user!._id,
       currency: 'NGN',
       amount: amountKobo,
-      referenceType: 'PaystackTransaction',
+      referenceType: 'FlutterwaveTransaction',
       referenceId: tx._id,
     });
 

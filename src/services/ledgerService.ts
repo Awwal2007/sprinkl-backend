@@ -6,7 +6,7 @@ export interface ICreditWalletParams {
   userId: Types.ObjectId | string;
   currency: 'NGN' | 'USDT';
   amount: number;
-  referenceType: 'Giveaway' | 'Claim' | 'PaystackTransaction' | 'CryptoDeposit';
+  referenceType: 'Giveaway' | 'Claim' | 'FlutterwaveTransaction' | 'PaystackTransaction' | 'CryptoDeposit';
   referenceId: Types.ObjectId | string;
 }
 

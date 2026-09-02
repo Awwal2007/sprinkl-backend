@@ -15,7 +15,7 @@ export interface ILedgerEntry extends Document {
   type: LedgerEntryType;
   amount: number;
   direction: 'credit' | 'debit';
-  referenceType: 'Giveaway' | 'Claim' | 'PaystackTransaction' | 'CryptoDeposit';
+  referenceType: 'Giveaway' | 'Claim' | 'FlutterwaveTransaction' | 'PaystackTransaction' | 'CryptoDeposit';
   referenceId: Types.ObjectId;
   balanceAfter: number;
   createdAt: Date;
@@ -45,7 +45,7 @@ const ledgerEntrySchema = new Schema<ILedgerEntry>(
 
     referenceType: {
       type: String,
-      enum: ['Giveaway', 'Claim', 'PaystackTransaction', 'CryptoDeposit'],
+      enum: ['Giveaway', 'Claim', 'FlutterwaveTransaction', 'PaystackTransaction', 'CryptoDeposit'],
       required: true,
     },
     referenceId: { type: Schema.Types.ObjectId, required: true },

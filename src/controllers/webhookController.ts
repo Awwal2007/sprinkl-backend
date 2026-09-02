@@ -48,7 +48,7 @@ export const handleFlutterwaveWebhook = async (req: Request, res: Response, next
             userId: user._id,
             currency: 'NGN',
             amount: amountKobo,
-            referenceType: 'PaystackTransaction',
+            referenceType: 'FlutterwaveTransaction',
             referenceId: tx._id,
           });
         }
