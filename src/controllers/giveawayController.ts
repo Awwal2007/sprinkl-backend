@@ -41,10 +41,10 @@ export const createGiveaway = async (req: AuthRequest, res: Response, next: Next
     }
 
     // A. Minimum Amount Per Winner Check
-    if (data.currency === 'NGN' && data.amountPerRecipient < 500) {
+    if (data.currency === 'NGN' && data.amountPerRecipient < 300) {
       await session.abortTransaction();
       return res.status(400).json({
-        error: 'Minimum payout per winner is ₦500 NGN to ensure transfer costs are fully covered.',
+        error: 'Minimum payout per winner is ₦300 NGN.',
       });
     }
     if (data.currency === 'USDT' && data.amountPerRecipient < 0.2) {
