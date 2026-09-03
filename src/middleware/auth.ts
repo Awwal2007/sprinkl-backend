@@ -44,6 +44,25 @@ export const requireVerifiedEmail = (req: AuthRequest, res: Response, next: Next
   });
 };
 
+export const optionalAuth = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+
+    if (token) {
+      const secret = process.env.JWT_ACCESS_SECRET || 'givehub_jwt_access_secret_sprinkl_2026_super_key';
+      const decoded = jwt.verify(token, secret) as { userId: string };
+      const user = await User.findById(decoded.userId);
+      if (user) {
+        req.user = user;
+      }
+    }
+  } catch (err) {
+    // Ignore invalid token for optionalAuth
+  }
+  return next();
+};
+
 export const requireAdmin = (req: AuthRequest, res: Response, next: NextFunction) => {
   if (req.user && req.user.role === 'admin') {
     return next();

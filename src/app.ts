@@ -9,6 +9,7 @@ import giveawayRoutes from './routes/giveawayRoutes';
 import claimRoutes from './routes/claimRoutes';
 import webhookRoutes from './routes/webhookRoutes';
 import adminRoutes from './routes/adminRoutes';
+import supportRoutes from './routes/supportRoutes';
 
 const app = express();
 
@@ -108,7 +109,7 @@ app.get('/api/health/providers', async (req, res) => {
       },
     },
     webhook: {
-      url: `${process.env.DOMAIN || 'https://sprinkl.biz'}/api/webhooks/flutterwave`,
+      url: `${process.env.DOMAIN || 'https://www.sprinkl.biz'}/api/webhooks/flutterwave`,
       secretHashConfigured: !!process.env.FLUTTERWAVE_SECRET_HASH,
     },
   });
@@ -120,6 +121,7 @@ app.use('/api/giveaways', giveawayRoutes);
 app.use('/api/g', claimRoutes);
 app.use('/api/webhooks', webhookRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/support', supportRoutes);
 
 app.use(errorHandler);
 
