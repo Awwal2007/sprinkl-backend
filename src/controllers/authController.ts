@@ -57,7 +57,7 @@ export const signup = async (req: Request, res: Response, next: NextFunction) =>
       verificationTokenExpires,
       kyc: {
         status: 'verified',
-        payoutReviewThreshold: parseInt(process.env.DEFAULT_KYC_PAYOUT_REVIEW_THRESHOLD || '500000', 10),
+        payoutReviewThreshold: parseInt(process.env.DEFAULT_KYC_PAYOUT_REVIEW_THRESHOLD || '50000000', 10),
       },
     });
 
@@ -412,4 +412,56 @@ export const updateProfile = async (req: AuthRequest, res: Response, next: NextF
     next(err);
   }
 };
+
+/**
+ * Submit a request to increase the payment threshold
+ */
+export const requestKycUpgrade = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { requestedThreshold, reason } = req.body;
+
+    if (!requestedThreshold || typeof requestedThreshold !== 'number' || requestedThreshold <= 0) {
+      return res.status(400).json({ error: 'A valid requested payment threshold amount is required.' });
+    }
+
+    if (!reason || typeof reason !== 'string' || reason.trim().length < 10) {
+      return res.status(400).json({ error: 'Please provide a reason of at least 10 characters explaining your need for a higher payment threshold.' });
+    }
+
+    const user = await User.findById(req.user!._id).select('+kyc');
+    if (!user) {
+      return res.status(404).json({ error: 'User not found.' });
+    }
+
+    // Prevent duplicate pending requests
+    if (user.kyc.requestStatus === 'pending') {
+      return res.status(400).json({
+        error: 'You already have a pending Payment Threshold upgrade request. Please wait for admin review.',
+      });
+    }
+
+    // The requested amount must be higher than current threshold
+    if (requestedThreshold <= user.kyc.payoutReviewThreshold) {
+      return res.status(400).json({
+        error: `Requested threshold must be higher than your current limit of ₦${(user.kyc.payoutReviewThreshold / 100).toLocaleString()}.`,
+      });
+    }
+
+    // Store the request in kobo (multiply naira by 100)
+    user.kyc.requestedThreshold = Math.round(requestedThreshold);
+    user.kyc.requestReason = reason.trim().slice(0, 500);
+    user.kyc.requestStatus = 'pending';
+    user.kyc.requestedAt = new Date();
+
+    await user.save();
+
+    return res.json({
+      message: 'Payment threshold upgrade request submitted successfully. An admin will review it shortly.',
+      kyc: user.kyc,
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
 

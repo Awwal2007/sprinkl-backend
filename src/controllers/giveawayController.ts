@@ -4,6 +4,7 @@ import { nanoid } from 'nanoid';
 import { z } from 'zod';
 import Giveaway from '../models/Giveaway';
 import Claim from '../models/Claim';
+import User from '../models/User';
 import LedgerService from '../services/ledgerService';
 import WalletAccount from '../models/WalletAccount';
 import { AuthRequest } from '../middleware/auth';
@@ -96,6 +97,30 @@ export const createGiveaway = async (req: AuthRequest, res: Response, next: Next
     platformFee = Math.max(minFee, platformFee);
     platformFee = Math.min(maxFee, platformFee);
     const totalRequired = giftPoolSmallest + platformFee;
+
+    // Payout / Payment Threshold Compliance Check (default: ₦500,000 / $500 USDT)
+    const hostUser = await User.findById(userId).session(session);
+    const hostThreshold = hostUser?.kyc?.payoutReviewThreshold || 50000000;
+    const isExceeded = data.currency === 'NGN'
+      ? giftPoolSmallest > hostThreshold
+      : giftPoolSmallest > 500000000; // $500 USDT
+
+    if (!isAdmin && isExceeded) {
+      await session.abortTransaction();
+      const limitFormatted = data.currency === 'NGN'
+        ? `₦${(hostThreshold / 100).toLocaleString()}`
+        : '$500 USDT';
+      const attemptedFormatted = data.currency === 'NGN'
+        ? `₦${(giftPoolSmallest / 100).toLocaleString()}`
+        : `$${(giftPoolSmallest / 1000000).toLocaleString()} USDT`;
+      return res.status(403).json({
+        error: `Your giveaway payout (${attemptedFormatted}) exceeds your Payment Threshold limit of ${limitFormatted}. Please submit a Payment Threshold increase request to proceed.`,
+        code: 'PAYMENT_THRESHOLD_EXCEEDED',
+        currentThreshold: hostThreshold,
+        attemptedPayout: giftPoolSmallest,
+        currency: data.currency,
+      });
+    }
 
     // Check host's available balance
     const wallet = await LedgerService.getOrCreateWallet(userId, data.currency, session);

@@ -27,6 +27,14 @@ router.get('/users', adminController.getUsers);
 router.patch('/users/:userId/role', adminController.updateUserRole);
 router.get('/flags', adminController.getFlaggedAccounts);
 
+// Payment Threshold Requests Management (supports /threshold-requests and legacy /kyc-requests)
+router.get('/threshold-requests', adminController.getKycRequests);
+router.get('/kyc-requests', adminController.getKycRequests);
+router.patch('/users/:userId/threshold-review', adminController.reviewKycRequest);
+router.patch('/users/:userId/kyc-review', adminController.reviewKycRequest);
+router.patch('/users/:userId/threshold', adminController.updateKycThreshold);
+router.patch('/users/:userId/kyc-threshold', adminController.updateKycThreshold);
+
 // Live Support Chat Desk API
 router.get('/support/sessions', supportController.getAdminSupportSessions);
 router.get('/support/sessions/:sessionId', supportController.getAdminSupportSessionMessages);
@@ -34,3 +42,4 @@ router.post('/support/sessions/:sessionId/reply', supportController.adminReplySu
 router.post('/support/sessions/:sessionId/close', supportController.closeSupportSession);
 
 export default router;
+

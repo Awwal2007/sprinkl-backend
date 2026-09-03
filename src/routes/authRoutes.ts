@@ -20,4 +20,8 @@ router.post('/reset-password', authLimiter, authController.resetPassword as any)
 // Authenticated profile update
 router.patch('/profile', authenticateToken as any, authController.updateProfile as any);
 
+// Payment threshold upgrade request (supports both /threshold-request and legacy /kyc-request)
+router.post('/threshold-request', authenticateToken as any, authController.requestKycUpgrade as any);
+router.post('/kyc-request', authenticateToken as any, authController.requestKycUpgrade as any);
+
 export default router;

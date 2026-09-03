@@ -21,6 +21,11 @@ export interface IUser extends Document {
   kyc: {
     status: 'none' | 'pending' | 'verified' | 'rejected';
     payoutReviewThreshold: number;
+    requestedThreshold?: number;
+    requestReason?: string;
+    requestStatus?: 'none' | 'pending' | 'approved' | 'rejected';
+    requestedAt?: Date;
+    reviewedAt?: Date;
   };
   cryptoDepositAddresses: ICryptoDepositAddress[];
   paystackCustomerCode?: string;
@@ -63,7 +68,16 @@ const userSchema = new Schema<IUser>(
         enum: ['none', 'pending', 'verified', 'rejected'],
         default: 'none',
       },
-      payoutReviewThreshold: { type: Number, default: 500000 },
+      payoutReviewThreshold: { type: Number, default: 50000000 }, // default ₦500,000 (in kobo)
+      requestedThreshold: { type: Number },
+      requestReason: { type: String, trim: true, maxlength: 500 },
+      requestStatus: {
+        type: String,
+        enum: ['none', 'pending', 'approved', 'rejected'],
+        default: 'none',
+      },
+      requestedAt: { type: Date },
+      reviewedAt: { type: Date },
     },
 
     cryptoDepositAddresses: [

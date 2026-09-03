@@ -415,3 +415,123 @@ export const getFlaggedAccounts = async (req: Request, res: Response, next: Next
     next(err);
   }
 };
+
+/**
+ * Get all KYC upgrade requests (pending + historical), paginated
+ */
+export const getKycRequests = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const page = Math.max(1, parseInt(req.query.page as string) || 1);
+    const limit = Math.min(50, Math.max(1, parseInt(req.query.limit as string) || 15));
+    const statusFilter = (req.query.status as string) || 'pending';
+
+    const query: any = {};
+    if (statusFilter !== 'all') {
+      query['kyc.requestStatus'] = statusFilter;
+    } else {
+      // Only return users who have ever submitted a request
+      query['kyc.requestStatus'] = { $in: ['pending', 'approved', 'rejected'] };
+    }
+
+    const total = await User.countDocuments(query);
+    const users = await User.find(query)
+      .select('fullName email kyc role createdAt')
+      .sort({ 'kyc.requestedAt': -1 })
+      .skip((page - 1) * limit)
+      .limit(limit);
+
+    return res.json({
+      requests: users,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit) || 1,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * Admin: Review a KYC upgrade request — approve with new threshold or reject
+ */
+export const reviewKycRequest = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { userId } = req.params;
+    const { action, newThreshold } = req.body; // action: 'approve' | 'reject'
+
+    if (!['approve', 'reject'].includes(action)) {
+      return res.status(400).json({ error: 'Action must be "approve" or "reject".' });
+    }
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found.' });
+    }
+
+    if (action === 'approve') {
+      const threshold = newThreshold ? Math.round(Number(newThreshold)) : user.kyc.requestedThreshold;
+      if (!threshold || threshold <= 0) {
+        return res.status(400).json({ error: 'A valid new threshold amount is required to approve.' });
+      }
+      user.kyc.payoutReviewThreshold = threshold;
+      user.kyc.requestStatus = 'approved';
+    } else {
+      user.kyc.requestStatus = 'rejected';
+    }
+
+    user.kyc.reviewedAt = new Date();
+    await user.save();
+
+    return res.json({
+      message: `Payment threshold request ${action === 'approve' ? 'approved' : 'rejected'} successfully.`,
+      user: {
+        _id: user._id,
+        fullName: user.fullName,
+        email: user.email,
+        kyc: user.kyc,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * Admin: Manually update a user's payment threshold directly
+ */
+export const updateKycThreshold = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { userId } = req.params;
+    const { newThreshold } = req.body;
+
+    const threshold = Math.round(Number(newThreshold));
+    if (!threshold || threshold <= 0) {
+      return res.status(400).json({ error: 'A valid positive threshold amount is required.' });
+    }
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found.' });
+    }
+
+    user.kyc.payoutReviewThreshold = threshold;
+    user.kyc.reviewedAt = new Date();
+    await user.save();
+
+    return res.json({
+      message: `Payment threshold updated to ₦${(threshold / 100).toLocaleString()} for ${user.fullName}.`,
+      user: {
+        _id: user._id,
+        fullName: user.fullName,
+        email: user.email,
+        kyc: user.kyc,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
