@@ -108,7 +108,7 @@ class EmailService {
       <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #0b0f17; color: #f8fafc; padding: 32px 20px; border-radius: 16px; border: 1px solid #1e293b;">
         <div style="text-align: center; margin-bottom: 24px;">
           <h1 style="color: #10b981; font-size: 24px; font-weight: 800; margin: 0;">Sprinkl Support Desk</h1>
-          <p style="color: #64748b; font-size: 12px; margin-top: 4px;">New Live Message from ${params.senderName}</p>
+          <p style="color: #f59e0b; font-size: 13px; font-weight: 700; margin-top: 4px;">⚠️ Live Agent Escalation Requested by ${params.senderName}</p>
         </div>
 
         <div style="background-color: #131b2e; padding: 24px; border-radius: 12px; border: 1px solid #1e293b;">
@@ -118,7 +118,7 @@ class EmailService {
             <p style="color: #94a3b8; font-size: 13px; margin: 4px 0;"><strong>Received At:</strong> ${new Date().toLocaleString()}</p>
           </div>
 
-          <p style="color: #cbd5e1; font-size: 12px; font-weight: 700; text-transform: uppercase; margin-bottom: 8px;">Message:</p>
+          <p style="color: #cbd5e1; font-size: 12px; font-weight: 700; text-transform: uppercase; margin-bottom: 8px;">User Message / Request:</p>
           <div style="background-color: #0b0f17; padding: 16px; border-radius: 8px; border: 1px solid #1e293b; color: #f8fafc; font-size: 14px; line-height: 22px; white-space: pre-wrap;">${params.messageText}</div>
 
           ${attachmentListHtml}
@@ -133,7 +133,7 @@ class EmailService {
     `;
 
     if (!this.resend) {
-      console.log(`[EmailService Dev Mock] Support email to ${adminEmail} from ${params.senderEmail}: "${params.messageText}"`);
+      console.log(`[EmailService Dev Mock] Agent escalation email to ${adminEmail} from ${params.senderEmail}: "${params.messageText}"`);
       return { success: true, mock: true };
     }
 
@@ -142,7 +142,7 @@ class EmailService {
         from: this.fromEmail,
         to: adminEmail,
         replyTo: params.senderEmail,
-        subject: `[Sprinkl Support] New message from ${params.senderName}`,
+        subject: `[Sprinkl Support] Agent Requested by ${params.senderName}`,
         html,
       });
       return { success: true, data };

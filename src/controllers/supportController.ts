@@ -221,14 +221,31 @@ export const sendSupportMessage = async (req: any, res: Response, next: NextFunc
       url: `${domain}/api/support/attachment/${att.fileId}`,
     }));
 
-    // 3. Send Email Notification to Admin asynchronously
-    emailService.sendSupportNotificationEmail({
-      senderName,
-      senderEmail,
-      messageText: text.trim(),
-      sessionId,
-      attachments: emailAttachmentLinks,
-    }).catch((err) => console.error('[Support Email Error]:', err));
+    // 3. Send Email Notification to Admin ONLY when user explicitly requests an agent
+    const lowerText = text.trim().toLowerCase();
+    const userWantsAgent =
+      lowerText.includes('agent') ||
+      lowerText.includes('human') ||
+      lowerText.includes('representative') ||
+      lowerText.includes('real person') ||
+      lowerText.includes('talk to someone') ||
+      lowerText.includes('speak to someone') ||
+      lowerText.includes('support team') ||
+      lowerText.includes('live support') ||
+      req.body.isAgentRequest === true ||
+      req.body.isAgentRequest === 'true';
+
+    if (userWantsAgent) {
+      emailService
+        .sendSupportNotificationEmail({
+          senderName,
+          senderEmail,
+          messageText: text.trim(),
+          sessionId,
+          attachments: emailAttachmentLinks,
+        })
+        .catch((err) => console.error('[Support Email Error]:', err));
+    }
 
     // 4. Generate automated Bot reply
     const botReplyText = generateBotReply(text.trim(), messageAttachments.length > 0);
