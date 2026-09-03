@@ -208,6 +208,24 @@ export const getHostGiveawayById = async (req: AuthRequest, res: Response, next:
       .sort({ createdAt: -1 })
       .limit(100);
 
+    // Calculate actual distributed amount strictly from successfully paid claims
+    const paidClaimsCount = await Claim.countDocuments({
+      giveaway: giveaway._id,
+      status: 'paid',
+    });
+    const actualDistributed = paidClaimsCount * giveaway.amountPerRecipient;
+
+    if (!giveaway.stats) {
+      giveaway.stats = { totalDistributed: actualDistributed, failedClaimAttempts: 0 };
+    } else {
+      giveaway.stats.totalDistributed = actualDistributed;
+    }
+
+    // Persist corrected totalDistributed if it differed
+    await Giveaway.findByIdAndUpdate(giveaway._id, {
+      'stats.totalDistributed': actualDistributed,
+    });
+
     return res.json({ giveaway, claims });
   } catch (err) {
     next(err);

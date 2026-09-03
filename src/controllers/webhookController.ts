@@ -110,10 +110,14 @@ export const handleFlutterwaveWebhook = async (req: Request, res: Response, next
             }
             await claim.save();
 
-            // Restore the giveaway slot
+            // Restore the giveaway slot and deduct from distributed stats
             if (giveaway) {
               await Giveaway.findByIdAndUpdate(giveaway._id, {
-                $inc: { slotsClaimed: -1, 'stats.failedClaimAttempts': 1 },
+                $inc: {
+                  slotsClaimed: -1,
+                  'stats.failedClaimAttempts': 1,
+                  'stats.totalDistributed': -claim.amount,
+                },
                 $set: { status: 'active' },
               });
             }
