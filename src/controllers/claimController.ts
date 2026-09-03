@@ -30,15 +30,15 @@ export const getPublicGiveaway = async (req: Request, res: Response, next: NextF
       return res.status(404).json({ error: 'Giveaway not found' });
     }
 
-    if (giveaway.status !== 'active') {
-      return res.status(400).json({ error: `This giveaway is currently ${giveaway.status}` });
+    if (giveaway.expiresAt && new Date() > new Date(giveaway.expiresAt)) {
+      if (giveaway.status !== 'completed' && giveaway.status !== 'cancelled') {
+        giveaway.status = 'expired';
+        await giveaway.save();
+      }
     }
 
-    if (giveaway.expiresAt && new Date() > new Date(giveaway.expiresAt)) {
-      giveaway.status = 'expired';
-      await giveaway.save();
-      return res.status(400).json({ error: 'This giveaway has expired' });
-    }
+    const isFullyClaimed =
+      giveaway.status === 'completed' || giveaway.slotsClaimed >= giveaway.totalSlots;
 
     return res.json({
       giveaway: {
@@ -51,7 +51,11 @@ export const getPublicGiveaway = async (req: Request, res: Response, next: NextF
         amountPerRecipient: giveaway.amountPerRecipient,
         totalSlots: giveaway.totalSlots,
         slotsClaimed: giveaway.slotsClaimed,
-        slotsRemaining: giveaway.totalSlots - giveaway.slotsClaimed,
+        slotsRemaining: Math.max(0, giveaway.totalSlots - giveaway.slotsClaimed),
+        status: giveaway.status,
+        isFullyClaimed,
+        isCancelled: giveaway.status === 'cancelled',
+        isExpired: giveaway.status === 'expired',
         expiresAt: giveaway.expiresAt,
         settings: giveaway.settings,
         hostName: (giveaway.host as any)?.fullName || 'Sprinkl Host',
