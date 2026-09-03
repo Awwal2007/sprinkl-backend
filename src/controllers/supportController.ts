@@ -5,6 +5,7 @@ import SupportSession, { ISupportAttachment } from '../models/SupportSession';
 import SupportMessage, { IMessageAttachment } from '../models/SupportMessage';
 import gridfsService from '../services/gridfsService';
 import emailService from '../services/emailService';
+import { emitToSession, emitToAdmins } from '../socket';
 
 /**
  * Generate context-aware automated Bot reply
@@ -269,6 +270,12 @@ export const sendSupportMessage = async (req: any, res: Response, next: NextFunc
       attachments: [],
     });
 
+    // ── Real-time: push both messages to the session room and admin room ──
+    emitToSession(sessionId, 'new_message', { message: userMessage, session });
+    emitToAdmins('new_message', { message: userMessage, session });
+    emitToSession(sessionId, 'new_message', { message: botMessage, session });
+    emitToAdmins('new_message', { message: botMessage, session });
+
     return res.status(201).json({
       sessionId: session.sessionId,
       session,
@@ -392,6 +399,11 @@ export const closeSupportSession = async (req: Request, res: Response, next: Nex
       text: `Chat with the agent has been closed on ${formattedDate}. All files uploaded during this session have been erased immediately and cannot be recovered. You can continue typing to ask questions anytime.`,
       attachments: [],
     });
+
+    // ── Real-time: notify user and admin that session closed ──
+    emitToSession(sessionId, 'new_message', { message: closingMessage, session });
+    emitToSession(sessionId, 'session_closed', { sessionId, closedAt: session.closedAt });
+    emitToAdmins('session_closed', { sessionId, closedAt: session.closedAt });
 
     return res.json({
       message: `Chat closed on ${formattedDate}. All attachments permanently deleted.`,
@@ -522,6 +534,10 @@ export const adminReplySupportSession = async (req: any, res: Response, next: Ne
         })
         .catch((err) => console.error('[Admin Reply User Email Error]:', err));
     }
+
+    // ── Real-time: push admin reply to the user's session room and admin room ──
+    emitToSession(sessionId, 'new_message', { message: adminMessage, session });
+    emitToAdmins('new_message', { message: adminMessage, session });
 
     return res.status(201).json({
       success: true,
