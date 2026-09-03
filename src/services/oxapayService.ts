@@ -48,6 +48,7 @@ export class OxaPayService {
         merchant: merchantKey,
         amount: params.amountUsdt,
         currency: 'USDT',
+        feeCurrency: 'USDT',      // auto-select USDT on OxaPay checkout
         network: params.chain, // TRC20 or BEP20
         orderId,
         callbackUrl,
@@ -78,6 +79,7 @@ export class OxaPayService {
         merchant: merchantKey,
         amount: params.amountUsdt,
         currency: 'USDT',
+        feeCurrency: 'USDT',      // auto-select USDT on OxaPay checkout
         network: params.chain,
         orderId,
         callbackUrl,
