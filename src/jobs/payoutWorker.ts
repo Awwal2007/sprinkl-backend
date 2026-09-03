@@ -1,6 +1,7 @@
 import Claim from '../models/Claim';
 import Giveaway from '../models/Giveaway';
 import Transaction from '../models/Transaction';
+import LedgerEntry from '../models/LedgerEntry';
 import LedgerService from '../services/ledgerService';
 import flutterwaveService from '../services/flutterwaveService';
 import cryptoService from '../services/cryptoService';
@@ -59,11 +60,25 @@ export class PayoutWorker {
       claim.payoutReference = payoutRef;
       await claim.save();
 
+      const beneficiaryName =
+        claim.destination?.resolvedAccountName ||
+        claim.claimantName ||
+        (claim.currency === 'USDT' ? 'Crypto Claimant' : 'Bank Claimant');
+      const beneficiaryAccount =
+        claim.destination?.accountNumber || claim.destination?.walletAddress || 'N/A';
+      const beneficiaryBank =
+        claim.destination?.bankName || claim.destination?.chain || 'N/A';
+
       await LedgerService.debitPayout({
         userId: hostId,
         currency: claim.currency,
         amount: claim.amount,
         claimId: claim._id,
+        beneficiaryName,
+        beneficiaryAccount,
+        beneficiaryBank,
+        status: 'paid',
+        note: `Payout for "${giveaway.title}"`,
       });
 
       await Transaction.create({
@@ -86,7 +101,7 @@ export class PayoutWorker {
         await Giveaway.findByIdAndUpdate(giveaway._id, { status: 'completed' });
       }
 
-      console.log(`[PayoutWorker] Claim ${claimId} successfully paid! Ref: ${payoutRef}`);
+      console.log(`[PayoutWorker] Claim ${claimId} successfully paid to ${beneficiaryName}! Ref: ${payoutRef}`);
       return claim;
     } catch (err: any) {
       console.error(`[PayoutWorker] Payout failed for Claim ${claimId}:`, err.message);
@@ -104,6 +119,38 @@ export class PayoutWorker {
         $inc: { slotsClaimed: -1, 'stats.failedClaimAttempts': 1 },
         $set: { status: 'active' },
       });
+
+      // Record a failed ledger entry for transparency in host ledger history
+      try {
+        const beneficiaryName =
+          claim.destination?.resolvedAccountName ||
+          claim.claimantName ||
+          (claim.currency === 'USDT' ? 'Crypto Claimant' : 'Bank Claimant');
+        const beneficiaryAccount =
+          claim.destination?.accountNumber || claim.destination?.walletAddress || 'N/A';
+        const beneficiaryBank =
+          claim.destination?.bankName || claim.destination?.chain || 'N/A';
+
+        const wallet = await LedgerService.getOrCreateWallet(hostId, claim.currency);
+
+        await LedgerEntry.create({
+          user: hostId,
+          currency: claim.currency,
+          type: 'payout',
+          status: 'failed',
+          amount: claim.amount,
+          direction: 'debit',
+          referenceType: 'Claim',
+          referenceId: claim._id,
+          balanceAfter: wallet.available + wallet.reserved,
+          beneficiaryName,
+          beneficiaryAccount,
+          beneficiaryBank,
+          note: `Failed Payout: ${err.message || 'Disbursement failed'}`,
+        });
+      } catch (ledgerErr) {
+        console.error('[PayoutWorker] Failed to write failed ledger record:', ledgerErr);
+      }
 
       throw err;
     }

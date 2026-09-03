@@ -1,6 +1,6 @@
 import mongoose, { ClientSession, Types } from 'mongoose';
 import WalletAccount, { IWalletAccount } from '../models/WalletAccount';
-import LedgerEntry, { LedgerEntryType } from '../models/LedgerEntry';
+import LedgerEntry, { LedgerEntryType, LedgerEntryStatus } from '../models/LedgerEntry';
 
 export interface ICreditWalletParams {
   userId: Types.ObjectId | string;
@@ -8,6 +8,8 @@ export interface ICreditWalletParams {
   amount: number;
   referenceType: 'Giveaway' | 'Claim' | 'FlutterwaveTransaction' | 'PaystackTransaction' | 'CryptoDeposit';
   referenceId: Types.ObjectId | string;
+  note?: string;
+  status?: LedgerEntryStatus;
 }
 
 export interface IReserveFundsParams {
@@ -15,6 +17,8 @@ export interface IReserveFundsParams {
   currency: 'NGN' | 'USDT';
   amount: number;
   giveawayId: Types.ObjectId | string;
+  note?: string;
+  status?: LedgerEntryStatus;
 }
 
 export interface IPayoutParams {
@@ -22,6 +26,11 @@ export interface IPayoutParams {
   currency: 'NGN' | 'USDT';
   amount: number;
   claimId: Types.ObjectId | string;
+  beneficiaryName?: string;
+  beneficiaryAccount?: string;
+  beneficiaryBank?: string;
+  status?: LedgerEntryStatus;
+  note?: string;
 }
 
 export interface IDeductFeeParams {
@@ -70,11 +79,13 @@ export class LedgerService {
         user: params.userId,
         currency: params.currency,
         type: 'fund' as LedgerEntryType,
+        status: params.status || 'paid',
         amount: params.amount,
         direction: 'credit',
         referenceType: params.referenceType,
         referenceId: params.referenceId,
         balanceAfter: wallet.available + wallet.reserved,
+        note: params.note || 'Wallet Deposit',
       });
 
       await ledgerEntry.save({ session });
@@ -119,11 +130,13 @@ export class LedgerService {
         user: params.userId,
         currency: params.currency,
         type: 'reserve' as LedgerEntryType,
+        status: params.status || 'paid',
         amount: params.amount,
         direction: 'debit',
         referenceType: 'Giveaway',
         referenceId: params.giveawayId,
         balanceAfter: wallet.available + wallet.reserved,
+        note: params.note || 'Reserved for Giveaway Pool',
       });
 
       await ledgerEntry.save({ session });
@@ -208,12 +221,14 @@ export class LedgerService {
       const ledgerEntry = new LedgerEntry({
         user: params.userId,
         currency: params.currency,
-        type: 'release' as LedgerEntryType,
+        type: 'cancel' as LedgerEntryType,
+        status: params.status || 'cancelled',
         amount: releaseAmount,
         direction: 'credit',
         referenceType: 'Giveaway',
         referenceId: params.giveawayId,
         balanceAfter: wallet.available + wallet.reserved,
+        note: params.note || 'Cancelled Giveaway Refund',
       });
 
       await ledgerEntry.save({ session });
@@ -250,11 +265,16 @@ export class LedgerService {
         user: params.userId,
         currency: params.currency,
         type: 'payout' as LedgerEntryType,
+        status: params.status || 'paid',
         amount: params.amount,
         direction: 'debit',
         referenceType: 'Claim',
         referenceId: params.claimId,
         balanceAfter: wallet.available + wallet.reserved,
+        beneficiaryName: params.beneficiaryName,
+        beneficiaryAccount: params.beneficiaryAccount,
+        beneficiaryBank: params.beneficiaryBank,
+        note: params.note || 'Giveaway Winner Payout',
       });
 
       await ledgerEntry.save({ session });

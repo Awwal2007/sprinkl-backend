@@ -6,18 +6,33 @@ export type LedgerEntryType =
   | 'release'
   | 'payout'
   | 'refund'
-  | 'platform_fee';
+  | 'platform_fee'
+  | 'cancel';
+
+export type LedgerEntryStatus =
+  | 'paid'
+  | 'success'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'processing'
+  | 'pending';
 
 export interface ILedgerEntry extends Document {
   _id: Types.ObjectId;
   user: Types.ObjectId;
   currency: 'NGN' | 'USDT';
   type: LedgerEntryType;
+  status: LedgerEntryStatus;
   amount: number;
   direction: 'credit' | 'debit';
   referenceType: 'Giveaway' | 'Claim' | 'FlutterwaveTransaction' | 'PaystackTransaction' | 'CryptoDeposit';
   referenceId: Types.ObjectId;
   balanceAfter: number;
+  beneficiaryName?: string;
+  beneficiaryAccount?: string;
+  beneficiaryBank?: string;
+  note?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -36,8 +51,15 @@ const ledgerEntrySchema = new Schema<ILedgerEntry>(
         'payout',
         'refund',
         'platform_fee',
+        'cancel',
       ],
       required: true,
+    },
+
+    status: {
+      type: String,
+      enum: ['paid', 'success', 'completed', 'failed', 'cancelled', 'processing', 'pending'],
+      default: 'paid',
     },
 
     amount: { type: Number, required: true },
@@ -51,6 +73,11 @@ const ledgerEntrySchema = new Schema<ILedgerEntry>(
     referenceId: { type: Schema.Types.ObjectId, required: true },
 
     balanceAfter: { type: Number, required: true },
+
+    beneficiaryName: { type: String },
+    beneficiaryAccount: { type: String },
+    beneficiaryBank: { type: String },
+    note: { type: String },
   },
   { timestamps: true }
 );

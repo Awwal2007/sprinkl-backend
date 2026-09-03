@@ -229,6 +229,8 @@ export const cancelGiveaway = async (req: AuthRequest, res: Response, next: Next
           currency: giveaway.currency,
           amount: unspentAmount,
           giveawayId: giveaway._id,
+          status: 'cancelled',
+          note: `Cancelled Giveaway "${giveaway.title}": ${unclaimedSlots} unclaimed slot(s) refunded`,
         },
         session
       );

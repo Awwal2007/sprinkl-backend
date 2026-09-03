@@ -342,12 +342,14 @@ export const releaseReservedFundsToAvailable = async (req: AuthRequest, res: Res
         {
           user: userId,
           currency,
-          type: 'release',
+          type: 'cancel',
+          status: 'cancelled',
           direction: 'credit',
           amount: amountToTransfer,
           referenceType: 'Giveaway',
           referenceId: refId,
           balanceAfter: wallet.available + wallet.reserved,
+          note: `Cancelled Giveaway Funding: ${activeGiveaways.length} campaign(s) closed, funds returned to available balance`,
         },
       ],
       { session }
