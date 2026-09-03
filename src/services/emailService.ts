@@ -170,9 +170,12 @@ class EmailService {
 
           ${attachmentListHtml}
 
-          <div style="text-align: center; margin-top: 24px;">
-            <a href="mailto:${params.senderEmail}?subject=Re:%20Sprinkl%20Support%20Inquiry%20(Session%20${params.sessionId})" style="background-color: #10b981; color: #022c22; font-weight: 700; font-size: 13px; text-decoration: none; padding: 10px 24px; border-radius: 8px; display: inline-block;">
-              Reply Directly via Email
+          <div style="text-align: center; margin-top: 24px; display: flex; justify-content: center; gap: 12px;">
+            <a href="${domain}/admin?tab=support&session=${params.sessionId}" style="background-color: #10b981; color: #022c22; font-weight: 700; font-size: 13px; text-decoration: none; padding: 10px 20px; border-radius: 8px; display: inline-block;">
+              Open in Admin Chat Desk
+            </a>
+            <a href="mailto:${params.senderEmail}?subject=Re:%20Sprinkl%20Support%20Inquiry%20(Session%20${params.sessionId})" style="background-color: #1e293b; color: #f8fafc; font-weight: 600; font-size: 13px; text-decoration: none; padding: 10px 20px; border-radius: 8px; display: inline-block; border: 1px solid #334155;">
+              Reply via Email
             </a>
           </div>
         </div>
@@ -189,12 +192,70 @@ class EmailService {
         from: this.fromEmail,
         to: adminEmail,
         replyTo: params.senderEmail,
-        subject: `[Sprinkl Support] Agent Requested by ${params.senderName}`,
+        subject: `[Sprinkl Support] Message from ${params.senderName}`,
         html,
       });
       return { success: true, data };
     } catch (err: any) {
       console.error('[EmailService Support Notification Error]', err);
+      return { success: false, error: err.message };
+    }
+  }
+
+  /**
+   * Send notification to user when an admin replies to their support chat
+   */
+  async sendAdminReplyNotificationEmail(params: {
+    userName: string;
+    userEmail: string;
+    adminName: string;
+    replyText: string;
+    sessionId: string;
+  }) {
+    if (!params.userEmail || params.userEmail.includes('@guest') || params.userEmail.includes('support-guest')) {
+      return { success: false, reason: 'Guest email, skipped' };
+    }
+
+    const domain = process.env.DOMAIN || 'https://www.sprinkl.biz';
+    const html = `
+      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #0b0f17; color: #f8fafc; padding: 32px 20px; border-radius: 16px; border: 1px solid #1e293b;">
+        <div style="text-align: center; margin-bottom: 24px;">
+          <h1 style="color: #10b981; font-size: 24px; font-weight: 800; margin: 0;">Sprinkl Support</h1>
+          <p style="color: #94a3b8; font-size: 13px; margin-top: 4px;">New reply from our support team</p>
+        </div>
+
+        <div style="background-color: #131b2e; padding: 24px; border-radius: 12px; border: 1px solid #1e293b;">
+          <p style="color: #cbd5e1; font-size: 14px; margin-top: 0;">
+            Hello ${params.userName || 'there'},<br><br>
+            <strong>${params.adminName || 'A support specialist'}</strong> from Sprinkl has replied to your conversation:
+          </p>
+
+          <div style="background-color: #0b0f17; padding: 16px; border-radius: 8px; border: 1px solid #1e293b; color: #f8fafc; font-size: 14px; line-height: 22px; margin: 16px 0; white-space: pre-wrap;">${params.replyText}</div>
+
+          <div style="text-align: center; margin-top: 24px;">
+            <a href="${domain}" style="background-color: #10b981; color: #022c22; font-weight: 700; font-size: 13px; text-decoration: none; padding: 12px 28px; border-radius: 8px; display: inline-block;">
+              View Chat & Reply
+            </a>
+          </div>
+        </div>
+      </div>
+    `;
+
+    if (!this.resend) {
+      console.log(`[EmailService Dev Mock] Admin reply email to user ${params.userEmail}: "${params.replyText}"`);
+      return { success: true, mock: true };
+    }
+
+    try {
+      const data = await this.resend.emails.send({
+        from: this.fromEmail,
+        to: params.userEmail,
+        subject: `Re: Sprinkl Support - New message from ${params.adminName}`,
+        html,
+      });
+      return { success: true, data };
+    } catch (err: any) {
+      console.error('[EmailService User Reply Error]', err);
       return { success: false, error: err.message };
     }
   }

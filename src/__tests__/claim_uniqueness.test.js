@@ -1,7 +1,7 @@
 const mongoose = require('mongoose');
-const Giveaway = require('../models/Giveaway');
-const Claim = require('../models/Claim');
-const User = require('../models/User');
+const Giveaway = require('../../dist/models/Giveaway').default || require('../../dist/models/Giveaway');
+const Claim = require('../../dist/models/Claim').default || require('../../dist/models/Claim');
+const User = require('../../dist/models/User').default || require('../../dist/models/User');
 
 const TEST_MONGODB_URI = process.env.MONGODB_URI_TEST || 'mongodb://127.0.0.1:27017/givehub_test';
 

@@ -154,6 +154,8 @@ export const sendSupportMessage = async (req: any, res: Response, next: NextFunc
     const senderName = name?.trim() || user?.fullName || session?.name || 'Guest User';
     const senderEmail = email?.trim() || user?.email || session?.email || 'guest@sprinkl.biz';
 
+    const isFirstMessage = !session;
+
     if (!session) {
       session = new SupportSession({
         sessionId,
@@ -162,18 +164,22 @@ export const sendSupportMessage = async (req: any, res: Response, next: NextFunc
         email: senderEmail,
         status: 'active',
         lastMessageAt: new Date(),
+        lastMessageText: text.trim(),
+        unreadAdminCount: 1,
+        isAgentRequested: false,
         attachments: [],
       });
     } else {
-      if (session.status === 'closed') {
-        session.status = 'active'; // reopen if user sends another message
-      }
+      // Reopen session if closed so user can continue asking prompts seamlessly
+      session.status = 'active';
       session.name = senderName;
       session.email = senderEmail;
       session.lastMessageAt = new Date();
+      session.lastMessageText = text.trim();
+      session.unreadAdminCount = (session.unreadAdminCount || 0) + 1;
     }
 
-    // Process file attachments through MongoDB GridFS
+    // Process file attachments through storage
     const messageAttachments: IMessageAttachment[] = [];
     const files = (req.files as Express.Multer.File[]) || [];
 
@@ -201,6 +207,24 @@ export const sendSupportMessage = async (req: any, res: Response, next: NextFunc
       });
     }
 
+    // 2. Determine if user specifically requested an agent
+    const lowerText = text.trim().toLowerCase();
+    const userWantsAgent =
+      lowerText.includes('agent') ||
+      lowerText.includes('human') ||
+      lowerText.includes('representative') ||
+      lowerText.includes('real person') ||
+      lowerText.includes('talk to someone') ||
+      lowerText.includes('speak to someone') ||
+      lowerText.includes('support team') ||
+      lowerText.includes('live support') ||
+      req.body.isAgentRequest === true ||
+      req.body.isAgentRequest === 'true';
+
+    if (userWantsAgent) {
+      session.isAgentRequested = true;
+    }
+
     await session.save();
 
     // 1. Create User Message
@@ -221,21 +245,8 @@ export const sendSupportMessage = async (req: any, res: Response, next: NextFunc
       url: `${domain}/api/support/attachment/${att.fileId}`,
     }));
 
-    // 3. Send Email Notification to Admin ONLY when user explicitly requests an agent
-    const lowerText = text.trim().toLowerCase();
-    const userWantsAgent =
-      lowerText.includes('agent') ||
-      lowerText.includes('human') ||
-      lowerText.includes('representative') ||
-      lowerText.includes('real person') ||
-      lowerText.includes('talk to someone') ||
-      lowerText.includes('speak to someone') ||
-      lowerText.includes('support team') ||
-      lowerText.includes('live support') ||
-      req.body.isAgentRequest === true ||
-      req.body.isAgentRequest === 'true';
-
-    if (userWantsAgent) {
+    // 3. Notify admin when user explicitly requests an agent OR on new chat session
+    if (userWantsAgent || isFirstMessage) {
       emailService
         .sendSupportNotificationEmail({
           senderName,
@@ -290,7 +301,7 @@ export const getSupportSession = async (req: Request, res: Response, next: NextF
 };
 
 /**
- * Stream an attachment directly from MongoDB GridFS
+ * Stream an attachment directly from storage
  */
 export const getAttachment = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -318,7 +329,7 @@ export const getAttachment = async (req: Request, res: Response, next: NextFunct
 };
 
 /**
- * Close chat session and permanently delete all attachments from MongoDB GridFS
+ * Close chat session and permanently delete all attachments from storage
  */
 export const closeSupportSession = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -348,32 +359,173 @@ export const closeSupportSession = async (req: Request, res: Response, next: Nex
       }
     }
 
-    // Permanently delete all attachment files from MongoDB GridFS
+    // Permanently delete all attachment files from storage
     const deletedFilesCount = await gridfsService.deleteMultipleFiles(fileIdsToDelete);
-    console.log(`[SupportSession Closed] Deleted ${deletedFilesCount} GridFS attachment(s) for session ${sessionId}`);
+
+    // Format current date and time cleanly
+    const closedDate = new Date();
+    const formattedDate = closedDate.toLocaleDateString('en-US', {
+      weekday: 'short',
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
 
     // Mark session closed and clear attachment metadata
     session.status = 'closed';
+    session.closedAt = closedDate;
     session.attachments = [];
+    session.unreadAdminCount = 0;
     await session.save();
 
     // Clear attachment references in messages
     await SupportMessage.updateMany({ sessionId }, { $set: { attachments: [] } });
 
-    // Add closing bot message
+    // Add closing message explicitly indicating that the chat with the agent was closed with date and time
     const closingMessage = await SupportMessage.create({
       session: session._id,
       sessionId,
       sender: 'bot',
-      senderName: 'Sprinkl Support Bot',
-      text: `Chat session has been successfully closed. All uploaded attachments (${deletedFilesCount} file(s)) have been permanently purged from storage. Thank you for using Sprinkl!`,
+      senderName: 'Sprinkl Support Desk',
+      text: `Chat with the agent has been closed on ${formattedDate}. All files uploaded during this session have been erased immediately and cannot be recovered. You can continue typing to ask questions anytime.`,
       attachments: [],
     });
 
     return res.json({
-      message: 'Chat session closed and all attachments permanently deleted from storage.',
+      message: `Chat closed on ${formattedDate}. All attachments permanently deleted.`,
       deletedFilesCount,
       closingMessage,
+      closedAt: session.closedAt,
+      session,
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * Admin: List support chat sessions with pagination, filtering & search
+ */
+export const getAdminSupportSessions = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const page = Math.max(1, parseInt(req.query.page as string) || 1);
+    const limit = Math.min(50, Math.max(1, parseInt(req.query.limit as string) || 15));
+    const status = (req.query.status as string) || 'all';
+    const search = (req.query.search as string) || '';
+
+    const query: any = {};
+    if (status === 'active') query.status = 'active';
+    if (status === 'closed') query.status = 'closed';
+    if (status === 'needs_agent') query.isAgentRequested = true;
+
+    if (search.trim()) {
+      const regex = new RegExp(search.trim(), 'i');
+      query.$or = [{ name: regex }, { email: regex }, { sessionId: regex }, { lastMessageText: regex }];
+    }
+
+    const total = await SupportSession.countDocuments(query);
+    const sessions = await SupportSession.find(query)
+      .sort({ lastMessageAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .populate('user', 'fullName email role');
+
+    return res.json({
+      sessions,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit) || 1,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * Admin: Get specific session messages
+ */
+export const getAdminSupportSessionMessages = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { sessionId } = req.params;
+    const session = await SupportSession.findOne({ sessionId }).populate('user', 'fullName email');
+
+    if (!session) {
+      return res.status(404).json({ error: 'Support session not found' });
+    }
+
+    // Reset unread counter since admin is viewing it
+    if (session.unreadAdminCount && session.unreadAdminCount > 0) {
+      session.unreadAdminCount = 0;
+      await session.save();
+    }
+
+    const messages = await SupportMessage.find({ sessionId }).sort({ createdAt: 1 });
+
+    return res.json({ session, messages });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * Admin: Reply to user support chat session
+ */
+export const adminReplySupportSession = async (req: any, res: Response, next: NextFunction) => {
+  try {
+    const { sessionId } = req.params;
+    const { text } = req.body;
+    const adminUser = req.user;
+
+    if (!text || !text.trim()) {
+      return res.status(400).json({ error: 'Reply text cannot be empty' });
+    }
+
+    const session = await SupportSession.findOne({ sessionId });
+    if (!session) {
+      return res.status(404).json({ error: 'Support session not found' });
+    }
+
+    const adminName = adminUser?.fullName || 'Sprinkl Support Specialist';
+
+    const adminMessage = await SupportMessage.create({
+      session: session._id,
+      sessionId,
+      sender: 'admin',
+      senderName: adminName,
+      text: text.trim(),
+      attachments: [],
+    });
+
+    session.lastMessageAt = new Date();
+    session.lastMessageText = text.trim();
+    session.unreadAdminCount = 0;
+    // Reopen session if it was closed
+    if (session.status === 'closed') {
+      session.status = 'active';
+    }
+    await session.save();
+
+    // Send email notification to user if valid email exists
+    if (session.email && !session.email.includes('support-guest') && !session.email.includes('@guest')) {
+      emailService
+        .sendAdminReplyNotificationEmail({
+          userName: session.name,
+          userEmail: session.email,
+          adminName,
+          replyText: text.trim(),
+          sessionId,
+        })
+        .catch((err) => console.error('[Admin Reply User Email Error]:', err));
+    }
+
+    return res.status(201).json({
+      success: true,
+      message: adminMessage,
       session,
     });
   } catch (err) {

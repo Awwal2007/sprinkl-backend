@@ -15,7 +15,11 @@ export interface ISupportSession extends Document {
   name: string;
   email: string;
   status: 'active' | 'closed';
+  closedAt?: Date;
   lastMessageAt: Date;
+  lastMessageText?: string;
+  unreadAdminCount?: number;
+  isAgentRequested?: boolean;
   attachments: ISupportAttachment[];
   createdAt: Date;
   updatedAt: Date;
@@ -28,7 +32,11 @@ const supportSessionSchema = new Schema<ISupportSession>(
     name: { type: String, default: 'Guest Visitor', trim: true },
     email: { type: String, default: 'support-guest@sprinkl.biz', trim: true, lowercase: true },
     status: { type: String, enum: ['active', 'closed'], default: 'active', index: true },
+    closedAt: { type: Date },
     lastMessageAt: { type: Date, default: Date.now },
+    lastMessageText: { type: String, default: '' },
+    unreadAdminCount: { type: Number, default: 0 },
+    isAgentRequested: { type: Boolean, default: false },
     attachments: [
       {
         fileId: { type: Schema.Types.ObjectId, required: true },

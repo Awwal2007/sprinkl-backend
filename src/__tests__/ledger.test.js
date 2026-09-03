@@ -1,8 +1,8 @@
 const mongoose = require('mongoose');
-const LedgerService = require('../services/ledgerService');
-const User = require('../models/User');
-const WalletAccount = require('../models/WalletAccount');
-const LedgerEntry = require('../models/LedgerEntry');
+const LedgerService = require('../../dist/services/ledgerService').default || require('../../dist/services/ledgerService');
+const User = require('../../dist/models/User').default || require('../../dist/models/User');
+const WalletAccount = require('../../dist/models/WalletAccount').default || require('../../dist/models/WalletAccount');
+const LedgerEntry = require('../../dist/models/LedgerEntry').default || require('../../dist/models/LedgerEntry');
 
 const TEST_MONGODB_URI = process.env.MONGODB_URI_TEST || 'mongodb://127.0.0.1:27017/givehub_test';
 
