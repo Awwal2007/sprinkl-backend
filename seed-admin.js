@@ -59,7 +59,7 @@ async function main() {
   } else {
     console.log(`⚠️ User "${TARGET_EMAIL}" not found. Creating default admin account...`);
     const salt = await bcrypt.genSalt(10);
-    const passwordHash = await bcrypt.hash('AdminSprinkl2026!', salt);
+    const passwordHash = await bcrypt.hash('@Halabi2007', salt);
 
     user = await User.create({
       fullName: 'Sprinkl Administrator',

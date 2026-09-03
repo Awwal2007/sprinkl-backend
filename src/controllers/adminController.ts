@@ -115,9 +115,9 @@ export const getOverviewReport = async (req: Request, res: Response, next: NextF
     const totalSlotsClaimed = slotStats[0]?.totalSlotsClaimed || 0;
     const claimRate = totalSlots > 0 ? Math.round((totalSlotsClaimed / totalSlots) * 100) : 0;
 
-    // 5. Users Breakdown
-    const totalUsers = await User.countDocuments();
-    const verifiedUsers = await User.countDocuments({ emailVerified: true });
+    // 5. Users Breakdown (excluding administrators from user counts)
+    const totalUsers = await User.countDocuments({ role: { $ne: 'admin' } });
+    const verifiedUsers = await User.countDocuments({ emailVerified: true, role: { $ne: 'admin' } });
     const hostUsers = await User.countDocuments({ role: 'host' });
     const adminUsers = await User.countDocuments({ role: 'admin' });
 
