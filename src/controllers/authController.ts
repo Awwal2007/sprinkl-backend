@@ -123,15 +123,21 @@ export const verifyEmail = async (req: Request, res: Response, next: NextFunctio
   }
 };
 
-export const resendVerificationEmail = async (req: AuthRequest, res: Response, next: NextFunction) => {
+export const resendVerificationEmail = async (req: any, res: Response, next: NextFunction) => {
   try {
-    const user = await User.findById(req.user!._id);
+    let user;
+    if (req.user?._id) {
+      user = await User.findById(req.user._id);
+    } else if (req.body?.email) {
+      user = await User.findOne({ email: req.body.email.toLowerCase().trim() });
+    }
+
     if (!user) {
-      return res.status(404).json({ error: 'User not found' });
+      return res.status(404).json({ error: 'User account not found' });
     }
 
     if (user.emailVerified) {
-      return res.status(400).json({ error: 'Email is already verified' });
+      return res.status(400).json({ error: 'Email is already verified. You can log in.' });
     }
 
     const verificationToken = crypto.randomBytes(32).toString('hex');
@@ -141,7 +147,7 @@ export const resendVerificationEmail = async (req: AuthRequest, res: Response, n
 
     await emailService.sendVerificationEmail(user.email, user.fullName, verificationToken);
 
-    return res.json({ message: 'Verification email has been sent!' });
+    return res.json({ message: 'A new verification link has been sent to your email!' });
   } catch (err) {
     next(err);
   }
@@ -159,6 +165,15 @@ export const login = async (req: Request, res: Response, next: NextFunction) => 
     const isMatch = await bcrypt.compare(data.password, user.passwordHash);
     if (!isMatch) {
       return res.status(401).json({ error: 'Invalid email or password' });
+    }
+
+    // Block login if email is not verified
+    if (!user.emailVerified) {
+      return res.status(403).json({
+        error: 'Please verify your email address before logging in. Check your inbox for the verification link.',
+        emailVerified: false,
+        email: user.email,
+      });
     }
 
     const { accessToken, refreshToken } = generateTokens(user._id);
