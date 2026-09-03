@@ -94,6 +94,28 @@ export const resolveBank = async (req: Request, res: Response, next: NextFunctio
   }
 };
 
+export const getClientIp = (req: Request): string => {
+  let ip = '';
+  const forwarded = req.headers['x-forwarded-for'];
+  if (typeof forwarded === 'string') {
+    ip = forwarded.split(',')[0].trim();
+  } else if (Array.isArray(forwarded) && forwarded.length > 0) {
+    ip = forwarded[0].trim();
+  } else if (typeof req.headers['cf-connecting-ip'] === 'string') {
+    ip = (req.headers['cf-connecting-ip'] as string).trim();
+  } else if (typeof req.headers['x-real-ip'] === 'string') {
+    ip = (req.headers['x-real-ip'] as string).trim();
+  } else {
+    ip = req.ip || req.socket?.remoteAddress || '';
+  }
+
+  // Strip IPv6-mapped IPv4 prefix if present (::ffff:1.2.3.4 -> 1.2.3.4)
+  if (ip.startsWith('::ffff:')) {
+    ip = ip.substring(7);
+  }
+  return ip.trim();
+};
+
 export const submitClaim = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const data = claimSchema.parse(req.body);
@@ -147,6 +169,35 @@ export const submitClaim = async (req: Request, res: Response, next: NextFunctio
       };
     }
 
+    // 1. Check duplicate claim by destination (bank account or wallet address)
+    const existingClaimByDest = await Claim.findOne({
+      giveaway: giveaway._id,
+      'destination.normalized': normalizedDestination,
+      status: { $in: ['pending', 'processing', 'paid'] },
+    });
+    if (existingClaimByDest) {
+      return res.status(409).json({
+        error:
+          'You have already claimed this giveaway! Each bank account or wallet address can only claim once.',
+      });
+    }
+
+    // 2. Check duplicate claim by IP address (enforce one claim per IP address per giveaway)
+    const clientIp = getClientIp(req);
+    if (clientIp) {
+      const existingClaimByIp = await Claim.findOne({
+        giveaway: giveaway._id,
+        'meta.ipAddress': clientIp,
+        status: { $in: ['pending', 'processing', 'paid'] },
+      });
+      if (existingClaimByIp) {
+        return res.status(409).json({
+          error:
+            'You have already claimed this giveaway from this network or device! Each IP address can only claim once to prevent duplicate claims.',
+        });
+      }
+    }
+
     if (giveaway.settings?.restrictFirstTimeClaimantsOnly) {
       const previousClaim = await Claim.findOne({
         'destination.normalized': normalizedDestination,
@@ -193,7 +244,7 @@ export const submitClaim = async (req: Request, res: Response, next: NextFunctio
         status: 'pending',
         idempotencyKey,
         meta: {
-          ipAddress: req.ip,
+          ipAddress: clientIp || req.ip || '',
           userAgent: req.get('user-agent'),
           deviceFingerprint: data.deviceFingerprint || '',
           captchaVerified: true,
@@ -207,7 +258,7 @@ export const submitClaim = async (req: Request, res: Response, next: NextFunctio
       if (dbErr.code === 11000) {
         return res.status(409).json({
           error:
-            'You have already claimed this giveaway! Each bank account or wallet address can only claim once.',
+            'You have already claimed this giveaway! Each bank account, wallet address, or IP address can only claim once.',
         });
       }
       throw dbErr;
