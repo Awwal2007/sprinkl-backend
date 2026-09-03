@@ -242,3 +242,159 @@ export const me = async (req: AuthRequest, res: Response) => {
     },
   });
 };
+
+/**
+ * Step 1 of forgot password: generate a 6-digit OTP and email it
+ */
+export const forgotPassword = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { email } = req.body;
+    if (!email) {
+      return res.status(400).json({ error: 'Email address is required' });
+    }
+
+    // Always return the same message to avoid email enumeration
+    const user = await User.findOne({ email: email.toLowerCase() });
+    if (!user) {
+      return res.json({ message: 'If that email is registered, a reset code has been sent.' });
+    }
+
+    const otp = Math.floor(100000 + Math.random() * 900000).toString(); // 6-digit code
+    const otpHash = await bcrypt.hash(otp, 10);
+    user.passwordResetToken = otpHash;
+    user.passwordResetExpires = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
+    await user.save();
+
+    await emailService.sendPasswordResetOtpEmail(user.email, user.fullName, otp);
+
+    return res.json({ message: 'If that email is registered, a reset code has been sent.' });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * Step 2 of forgot password: verify the OTP (returns a short-lived reset token)
+ */
+export const verifyResetCode = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { email, code } = req.body;
+    if (!email || !code) {
+      return res.status(400).json({ error: 'Email and reset code are required' });
+    }
+
+    const user = await User.findOne({
+      email: email.toLowerCase(),
+      passwordResetExpires: { $gt: new Date() },
+    }).select('+passwordResetToken +passwordResetExpires');
+
+    if (!user || !user.passwordResetToken) {
+      return res.status(400).json({ error: 'Reset code is invalid or has expired' });
+    }
+
+    const isMatch = await bcrypt.compare(code, user.passwordResetToken);
+    if (!isMatch) {
+      return res.status(400).json({ error: 'Incorrect reset code. Please try again.' });
+    }
+
+    // Issue a short-lived signed token the client can use for the final step
+    const accessSecret = process.env.JWT_ACCESS_SECRET || 'givehub_jwt_access_secret_sprinkl_2026_super_key';
+    const resetSessionToken = jwt.sign({ userId: user._id, purpose: 'password_reset' }, accessSecret, { expiresIn: '10m' });
+
+    return res.json({ resetSessionToken, message: 'Code verified. You may now set a new password.' });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * Step 3 of forgot password: set the new password using the reset session token
+ */
+export const resetPassword = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { resetSessionToken, newPassword } = req.body;
+    if (!resetSessionToken || !newPassword) {
+      return res.status(400).json({ error: 'Reset token and new password are required' });
+    }
+    if (newPassword.length < 8) {
+      return res.status(400).json({ error: 'Password must be at least 8 characters' });
+    }
+
+    const accessSecret = process.env.JWT_ACCESS_SECRET || 'givehub_jwt_access_secret_sprinkl_2026_super_key';
+    let decoded: any;
+    try {
+      decoded = jwt.verify(resetSessionToken, accessSecret) as { userId: string; purpose: string };
+    } catch {
+      return res.status(400).json({ error: 'Reset session expired. Please request a new code.' });
+    }
+
+    if (decoded.purpose !== 'password_reset') {
+      return res.status(400).json({ error: 'Invalid reset token' });
+    }
+
+    const user = await User.findById(decoded.userId).select('+passwordResetToken +passwordResetExpires');
+    if (!user) {
+      return res.status(404).json({ error: 'Account not found' });
+    }
+
+    user.passwordHash = await bcrypt.hash(newPassword, 10);
+    user.passwordResetToken = undefined;
+    user.passwordResetExpires = undefined;
+    user.refreshTokenHash = undefined; // invalidate all sessions
+    await user.save();
+
+    return res.json({ message: 'Password reset successfully. You can now sign in with your new password.' });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * Update profile (fullName, phone) or change password for authenticated user
+ */
+export const updateProfile = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const user = await User.findById(req.user!._id).select('+passwordHash');
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const { fullName, phone, currentPassword, newPassword } = req.body;
+
+    if (fullName && fullName.trim().length >= 2) {
+      user.fullName = fullName.trim();
+    }
+    if (phone !== undefined) {
+      user.phone = phone.trim();
+    }
+
+    if (currentPassword && newPassword) {
+      if (newPassword.length < 8) {
+        return res.status(400).json({ error: 'New password must be at least 8 characters' });
+      }
+      const isMatch = await bcrypt.compare(currentPassword, user.passwordHash);
+      if (!isMatch) {
+        return res.status(400).json({ error: 'Current password is incorrect' });
+      }
+      user.passwordHash = await bcrypt.hash(newPassword, 10);
+    }
+
+    await user.save();
+
+    return res.json({
+      message: 'Profile updated successfully',
+      user: {
+        id: user._id,
+        fullName: user.fullName,
+        email: user.email,
+        phone: user.phone,
+        role: user.role,
+        emailVerified: user.emailVerified,
+        kyc: user.kyc,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+

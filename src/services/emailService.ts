@@ -73,6 +73,53 @@ class EmailService {
   }
 
   /**
+   * Send a 6-digit password reset OTP to the user's email
+   */
+  async sendPasswordResetOtpEmail(email: string, fullName: string, otp: string) {
+    const html = `
+      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #0b0f17; color: #f8fafc; padding: 40px 24px; border-radius: 16px; border: 1px solid #1e293b;">
+        <div style="text-align: center; margin-bottom: 32px;">
+          <h1 style="color: #10b981; font-size: 28px; font-weight: 800; margin: 0; letter-spacing: -0.5px;">Sprinkl</h1>
+          <p style="color: #64748b; font-size: 13px; margin-top: 4px;">Password Reset</p>
+        </div>
+        <div style="background-color: #131b2e; padding: 28px; border-radius: 12px; border: 1px solid #1e293b;">
+          <h2 style="color: #ffffff; font-size: 18px; font-weight: 700; margin-top: 0;">Reset Your Password</h2>
+          <p style="color: #94a3b8; font-size: 14px; line-height: 22px;">
+            Hello ${fullName},<br><br>
+            We received a request to reset your Sprinkl password. Enter the code below within <strong style="color: #f8fafc;">15 minutes</strong>:
+          </p>
+          <div style="text-align: center; margin: 28px 0;">
+            <div style="display: inline-block; background-color: #0b0f17; border: 2px solid #10b981; border-radius: 14px; padding: 16px 40px;">
+              <span style="font-size: 36px; font-weight: 900; letter-spacing: 10px; color: #10b981; font-family: monospace;">${otp}</span>
+            </div>
+          </div>
+          <p style="color: #64748b; font-size: 12px; line-height: 18px; text-align: center;">
+            This code expires in 15 minutes. If you didn't request a password reset, you can safely ignore this email.
+          </p>
+        </div>
+      </div>
+    `;
+
+    if (!this.resend) {
+      console.log(`[EmailService Dev Mock] Password reset OTP for ${email}: ${otp}`);
+      return { success: true, mock: true };
+    }
+
+    try {
+      const data = await this.resend.emails.send({
+        from: this.fromEmail,
+        to: email,
+        subject: `${otp} — Your Sprinkl Password Reset Code`,
+        html,
+      });
+      return { success: true, data };
+    } catch (err: any) {
+      console.error('[EmailService OTP Error]', err);
+      return { success: false, error: err.message };
+    }
+  }
+
+  /**
    * Send notification email to admin when a user submits a support chat message
    */
   async sendSupportNotificationEmail(params: {

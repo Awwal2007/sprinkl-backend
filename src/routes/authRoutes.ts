@@ -12,4 +12,12 @@ router.post('/resend-verification', authenticateToken as any, authController.res
 router.post('/refresh', authController.refreshToken);
 router.get('/me', authenticateToken as any, authController.me as any);
 
+// Password reset (3-step OTP flow)
+router.post('/forgot-password', authLimiter, authController.forgotPassword as any);
+router.post('/verify-reset-code', authLimiter, authController.verifyResetCode as any);
+router.post('/reset-password', authLimiter, authController.resetPassword as any);
+
+// Authenticated profile update
+router.patch('/profile', authenticateToken as any, authController.updateProfile as any);
+
 export default router;
