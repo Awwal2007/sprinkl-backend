@@ -5,6 +5,7 @@ import { z } from 'zod';
 import Giveaway from '../models/Giveaway';
 import Claim from '../models/Claim';
 import LedgerService from '../services/ledgerService';
+import WalletAccount from '../models/WalletAccount';
 import { AuthRequest } from '../middleware/auth';
 
 const createGiveawaySchema = z.object({
@@ -219,32 +220,65 @@ export const cancelGiveaway = async (req: AuthRequest, res: Response, next: Next
       return res.status(404).json({ error: 'Active giveaway not found' });
     }
 
-    const unclaimedSlots = giveaway.totalSlots - giveaway.slotsClaimed;
-    const unspentAmount = unclaimedSlots * giveaway.amountPerRecipient;
+    // Count only successfully paid claims to calculate how much was actually disbursed
+    const paidClaimsCount = await Claim.countDocuments({
+      giveaway: giveaway._id,
+      status: 'paid',
+    }).session(session);
 
-    if (unspentAmount > 0) {
-      await LedgerService.releaseReservedFunds(
-        {
-          userId: req.user!._id,
-          currency: giveaway.currency,
-          amount: unspentAmount,
-          giveawayId: giveaway._id,
-          status: 'cancelled',
-          note: `Cancelled Giveaway "${giveaway.title}": ${unclaimedSlots} unclaimed slot(s) refunded`,
-        },
-        session
-      );
+    // Amount actually disbursed from the reserved pool
+    const amountDisbursed = paidClaimsCount * giveaway.amountPerRecipient;
+    // Amount that should still be reserved = original pool minus what was paid out
+    const theoreticalUnspent = Math.max(0, giveaway.totalReservedAmount - amountDisbursed);
+
+    if (theoreticalUnspent > 0) {
+      // Read actual wallet reserved to prevent over-releasing
+      const wallet = await WalletAccount.findOne({
+        user: req.user!._id,
+        currency: giveaway.currency,
+      }).session(session);
+
+      const actualReserved = wallet?.reserved ?? 0;
+      // Never release more than what the wallet actually has reserved
+      const unspentAmount = Math.min(theoreticalUnspent, actualReserved);
+
+      if (unspentAmount > 0) {
+        const unclaimedSlots = Math.round(unspentAmount / giveaway.amountPerRecipient);
+        await LedgerService.releaseReservedFunds(
+          {
+            userId: req.user!._id,
+            currency: giveaway.currency,
+            amount: unspentAmount,
+            giveawayId: giveaway._id,
+            status: 'cancelled',
+            note: `Cancelled Giveaway "${giveaway.title}": ${unclaimedSlots} unclaimed slot(s) refunded`,
+          },
+          session
+        );
+      }
+
+      giveaway.status = 'cancelled';
+      await giveaway.save({ session });
+
+      await session.commitTransaction();
+
+      return res.json({
+        message: 'Giveaway cancelled. Unspent funds released back to your wallet.',
+        giveaway,
+        refundedAmount: unspentAmount,
+      });
     }
 
+    // All slots were already paid — nothing to refund, just cancel
     giveaway.status = 'cancelled';
     await giveaway.save({ session });
 
     await session.commitTransaction();
 
     return res.json({
-      message: 'Giveaway cancelled. Unspent funds released back to your wallet.',
+      message: 'Giveaway cancelled. No unspent funds to refund (all slots were paid).',
       giveaway,
-      refundedAmount: unspentAmount,
+      refundedAmount: 0,
     });
   } catch (err) {
     await session.abortTransaction();

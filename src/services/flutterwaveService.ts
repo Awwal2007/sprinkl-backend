@@ -206,31 +206,20 @@ export class FlutterwaveService {
       throw new Error(response.data?.message || 'Transfer failed');
     } catch (err: any) {
       const msg = err.response?.data?.message || err.message || 'Flutterwave transfer request failed';
-      console.warn('[Flutterwave Transfer API Error]:', msg);
+      console.error('[Flutterwave Transfer API Error]:', msg);
 
-      // If Flutterwave blocks due to merchant dashboard permissions, IP Whitelisting, or setup issues,
-      // provide a valid transfer reference so recipient claims succeed and never show a failed error screen
-      const lower = msg.toLowerCase();
-      const isDashboardConfigIssue =
-        lower.includes('not enabled to make transfers') ||
-        lower.includes('merchant is not enabled') ||
-        lower.includes('ip whitelisting') ||
-        lower.includes('insufficient') ||
-        lower.includes('balance') ||
-        process.env.NODE_ENV !== 'production' ||
-        !this.secretKey;
-
-      if (isDashboardConfigIssue) {
-        console.warn(
-          '[Flutterwave Fallback] Claim recorded with valid transfer reference. (To disburse live bank funds directly, enable API Transfers in Flutterwave Dashboard -> Settings -> Business Preferences -> Security/Transfers).'
-        );
+      // In non-production / dev, return a sandbox stub so you can test the full payout flow locally
+      // without a live Flutterwave key. This NEVER runs in production.
+      if (process.env.NODE_ENV !== 'production') {
+        console.warn('[Flutterwave Fallback] DEV SANDBOX: returning simulated transfer reference.');
         return {
           transferCode: `FLW_TRF_${Date.now()}`,
-          status: 'successful',
+          status: 'NEW',
           reference: `FLW_PAY_${Date.now()}`,
         };
       }
 
+      // In production, always surface the real error so payoutWorker can mark the claim FAILED.
       throw new Error(msg);
     }
   }

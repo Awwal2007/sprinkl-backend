@@ -4,6 +4,7 @@ import User from '../models/User';
 import Transaction from '../models/Transaction';
 import Claim from '../models/Claim';
 import Giveaway from '../models/Giveaway';
+import LedgerEntry from '../models/LedgerEntry';
 import LedgerService from '../services/ledgerService';
 
 export const handleFlutterwaveWebhook = async (req: Request, res: Response, next: NextFunction) => {
@@ -71,24 +72,79 @@ export const handleFlutterwaveWebhook = async (req: Request, res: Response, next
       }).populate('giveaway');
 
       if (claim) {
-        if (status === 'SUCCESSFUL') {
+        const giveaway: any = claim.giveaway;
+        const hostId = giveaway?.host;
+
+        if (status === 'SUCCESSFUL' && claim.status !== 'paid') {
           claim.status = 'paid';
           claim.failureReason = undefined;
           await claim.save();
-        } else if (status === 'FAILED') {
-          claim.status = 'failed';
-          claim.failureReason = complete_message || 'Transfer disbursement failed on Flutterwave';
-          if (claim.destination && claim.destination.normalized) {
-            claim.destination.normalized = `FAILED_${Date.now()}_${claim.destination.normalized}`;
-          }
-          await claim.save();
 
-          // Restore slot on giveaway
-          if (claim.giveaway) {
-            await Giveaway.findByIdAndUpdate(claim.giveaway._id, {
-              $inc: { slotsClaimed: -1, 'stats.failedClaimAttempts': 1 },
-              $set: { status: 'active' },
-            });
+          // Write ledger debit if not already present
+          if (hostId) {
+            const existing = await LedgerEntry.findOne({ referenceType: 'Claim', referenceId: claim._id, status: 'paid' });
+            if (!existing) {
+              const beneficiaryName = claim.destination?.resolvedAccountName || claim.claimantName || 'Claimant';
+              const beneficiaryAccount = claim.destination?.accountNumber || claim.destination?.walletAddress || 'N/A';
+              const beneficiaryBank = claim.destination?.bankName || claim.destination?.chain || 'N/A';
+              await LedgerService.debitPayout({
+                userId: hostId,
+                currency: claim.currency,
+                amount: claim.amount,
+                claimId: claim._id,
+                beneficiaryName,
+                beneficiaryAccount,
+                beneficiaryBank,
+                status: 'paid',
+                note: `Payout confirmed by Flutterwave`,
+              });
+            }
+          }
+        } else if (status === 'FAILED') {
+          // Only process the failure if the claim isn't already marked failed
+          if (claim.status !== 'failed') {
+            claim.status = 'failed';
+            claim.failureReason = complete_message || 'Transfer disbursement failed on Flutterwave';
+            if (claim.destination && claim.destination.normalized) {
+              claim.destination.normalized = `FAILED_${Date.now()}_${claim.destination.normalized}`;
+            }
+            await claim.save();
+
+            // Restore the giveaway slot
+            if (giveaway) {
+              await Giveaway.findByIdAndUpdate(giveaway._id, {
+                $inc: { slotsClaimed: -1, 'stats.failedClaimAttempts': 1 },
+                $set: { status: 'active' },
+              });
+            }
+
+            // Write a failed ledger entry for the host's history
+            if (hostId) {
+              try {
+                const wallet = await LedgerService.getOrCreateWallet(hostId, claim.currency);
+                const beneficiaryName = claim.destination?.resolvedAccountName || claim.claimantName || 'Claimant';
+                const beneficiaryAccount = claim.destination?.accountNumber || claim.destination?.walletAddress || 'N/A';
+                const beneficiaryBank = claim.destination?.bankName || claim.destination?.chain || 'N/A';
+
+                await LedgerEntry.create({
+                  user: hostId,
+                  currency: claim.currency,
+                  type: 'payout',
+                  status: 'failed',
+                  amount: claim.amount,
+                  direction: 'debit',
+                  referenceType: 'Claim',
+                  referenceId: claim._id,
+                  balanceAfter: wallet.available + wallet.reserved,
+                  beneficiaryName,
+                  beneficiaryAccount,
+                  beneficiaryBank,
+                  note: `Failed Payout (Flutterwave): ${complete_message || 'Disbursement failed'}`,
+                });
+              } catch (ledgerErr) {
+                console.error('[Webhook] Failed to write failed ledger entry:', ledgerErr);
+              }
+            }
           }
         }
       }
