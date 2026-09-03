@@ -176,3 +176,65 @@ export const handleCryptoDepositWebhook = async (req: Request, res: Response, ne
     next(err);
   }
 };
+
+export const handleOxaPayWebhook = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const payload = req.body;
+    console.log('[OxaPay Webhook Received]:', JSON.stringify(payload));
+
+    const { trackId, status, amount, orderId, txID, network } = payload;
+
+    if (status === 'Paid' && orderId && amount) {
+      // orderId format: USDT_DEP_{userId}_{timestamp}
+      const parts = orderId.split('_');
+      const userId = parts[2];
+
+      const user = userId ? await User.findById(userId) : null;
+      if (!user) {
+        console.warn('[OxaPay Webhook] User not found for orderId:', orderId);
+        return res.status(200).send('User not found');
+      }
+
+      const providerRef = String(trackId || txID || orderId);
+      const existingTx = await Transaction.findOne({
+        provider: 'oxapay',
+        providerReference: providerRef,
+      });
+
+      if (existingTx) {
+        console.log('[OxaPay Webhook] Deposit already credited for trackId:', trackId);
+        return res.status(200).send('Already processed');
+      }
+
+      const amountUsdtUnits = Math.round(Number(amount) * 1000000);
+
+      const tx = await Transaction.create({
+        user: user._id,
+        provider: 'oxapay',
+        providerReference: providerRef,
+        direction: 'inbound',
+        currency: 'USDT',
+        amount: amountUsdtUnits,
+        status: 'success',
+        rawPayload: payload,
+      });
+
+      await LedgerService.creditWallet({
+        userId: user._id,
+        currency: 'USDT',
+        amount: amountUsdtUnits,
+        referenceType: 'CryptoDeposit',
+        referenceId: tx._id,
+      });
+
+      console.log(
+        `[OxaPay Webhook] Successfully credited $${amount} USDT to user ${user.email} (${network})`
+      );
+    }
+
+    return res.status(200).send('OK');
+  } catch (err) {
+    console.error('[OxaPay Webhook Error]:', err);
+    return res.status(200).send('Error processed');
+  }
+};

@@ -5,6 +5,7 @@ import LedgerEntry from '../models/LedgerEntry';
 import WalletAccount from '../models/WalletAccount';
 import flutterwaveService from '../services/flutterwaveService';
 import cryptoService from '../services/cryptoService';
+import oxapayService from '../services/oxapayService';
 import Transaction from '../models/Transaction';
 import { AuthRequest } from '../middleware/auth';
 import Giveaway from '../models/Giveaway';
@@ -218,6 +219,30 @@ export const getUsdtDepositAddress = async (req: AuthRequest, res: Response, nex
     });
   } catch (err) {
     next(err);
+  }
+};
+
+export const createOxaPayDepositInvoice = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { amountUsdt, chain = 'TRC20' } = req.body;
+    const user = req.user!;
+
+    if (!amountUsdt || Number(amountUsdt) < 1) {
+      return res.status(400).json({ error: 'Minimum USDT deposit amount is $1' });
+    }
+
+    const invoice = await oxapayService.createDepositInvoice({
+      amountUsdt: Number(amountUsdt),
+      userId: user._id.toString(),
+      chain,
+      email: user.email,
+    });
+
+    return res.json({
+      invoice,
+    });
+  } catch (err: any) {
+    return res.status(400).json({ error: err.message || 'Failed to create crypto deposit invoice' });
   }
 };
 
