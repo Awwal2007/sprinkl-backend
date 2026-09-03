@@ -41,16 +41,25 @@ export const createGiveaway = async (req: AuthRequest, res: Response, next: Next
     }
 
     // A. Minimum Amount Per Winner Check
-    if (data.currency === 'NGN' && data.amountPerRecipient < 300) {
+    // Admins have a lower floor (₦100 NGN / $0.10 USDT) for testing & flexibility
+    const isAdmin = (req.user as any)?.role === 'admin';
+    const ngnMin = isAdmin ? 100 : 300;
+    const usdtMin = isAdmin ? 0.1 : 0.2;
+
+    if (data.currency === 'NGN' && data.amountPerRecipient < ngnMin) {
       await session.abortTransaction();
       return res.status(400).json({
-        error: 'Minimum payout per winner is ₦300 NGN.',
+        error: isAdmin
+          ? 'Minimum payout per winner is ₦100 NGN (admin mode).'
+          : 'Minimum payout per winner is ₦300 NGN.',
       });
     }
-    if (data.currency === 'USDT' && data.amountPerRecipient < 0.2) {
+    if (data.currency === 'USDT' && data.amountPerRecipient < usdtMin) {
       await session.abortTransaction();
       return res.status(400).json({
-        error: 'Minimum payout per winner is $0.20 USDT to cover blockchain transfer gas.',
+        error: isAdmin
+          ? 'Minimum payout per winner is $0.10 USDT (admin mode).'
+          : 'Minimum payout per winner is $0.20 USDT to cover blockchain transfer gas.',
       });
     }
 
