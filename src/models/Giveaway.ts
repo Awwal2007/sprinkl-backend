@@ -33,6 +33,7 @@ export interface IGiveaway extends Document {
   totalReservedAmount: number;
   platformFee: number;
   status: GiveawayStatus;
+  fundsReleased?: boolean;
   expiresAt?: Date | null;
   settings?: IGiveawaySettings;
   stats: IGiveawayStats;
@@ -66,6 +67,8 @@ const giveawaySchema = new Schema<IGiveaway>(
       default: 'active',
       index: true,
     },
+
+    fundsReleased: { type: Boolean, default: false },
 
     expiresAt: { type: Date, default: null },
 

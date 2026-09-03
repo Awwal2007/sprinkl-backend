@@ -298,22 +298,23 @@ export const releaseReservedFundsToAvailable = async (req: AuthRequest, res: Res
     const currency = (req.body.currency || 'NGN').toUpperCase() as 'NGN' | 'USDT';
     const userId = req.user!._id;
 
-    // 1. Find all active/paused giveaways for this user in this currency and close them
-    const activeGiveaways = await Giveaway.find({
+    // 1. Only find CANCELLED giveaways for this user in this currency that haven't released funds yet
+    const cancelledGiveaways = await Giveaway.find({
       host: userId,
       currency,
-      status: { $in: ['active', 'paused'] },
+      status: 'cancelled',
+      fundsReleased: { $ne: true },
     }).session(session);
 
-    let totalCalculatedUnspent = 0;
+    if (cancelledGiveaways.length === 0) {
+      await session.abortTransaction();
+      return res.status(400).json({
+        error: 'Transfer to main wallet is only allowed after a claim is cancelled. No cancelled giveaways with pending funds found.',
+      });
+    }
 
-    for (const g of activeGiveaways) {
-      const unclaimed = Math.max(0, g.totalSlots - g.slotsClaimed);
-      const unspent = unclaimed * g.amountPerRecipient;
-      if (unspent > 0) {
-        totalCalculatedUnspent += unspent;
-      }
-      g.status = 'cancelled';
+    for (const g of cancelledGiveaways) {
+      g.fundsReleased = true;
       await g.save({ session });
     }
 
@@ -336,7 +337,7 @@ export const releaseReservedFundsToAvailable = async (req: AuthRequest, res: Res
     await wallet.save({ session });
 
     // Record ledger entry with all required schema fields
-    const refId = activeGiveaways[0]?._id || new mongoose.Types.ObjectId();
+    const refId = cancelledGiveaways[0]?._id || new mongoose.Types.ObjectId();
     await LedgerEntry.create(
       [
         {
@@ -349,7 +350,7 @@ export const releaseReservedFundsToAvailable = async (req: AuthRequest, res: Res
           referenceType: 'Giveaway',
           referenceId: refId,
           balanceAfter: wallet.available + wallet.reserved,
-          note: `Cancelled Giveaway Funding: ${activeGiveaways.length} campaign(s) closed, funds returned to available balance`,
+          note: `Cancelled Giveaway Transfer: ${cancelledGiveaways.length} cancelled campaign(s) unspent funds transferred to main wallet`,
         },
       ],
       { session }
