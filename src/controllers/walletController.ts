@@ -88,8 +88,8 @@ export const initializeFlutterwaveDeposit = async (req: AuthRequest, res: Respon
   try {
     const { amountNaira } = req.body;
     const amount = parseFloat(amountNaira);
-    if (!amount || amount < 3000) {
-      return res.status(400).json({ error: 'Minimum deposit is ₦3,000.' });
+    if (!amount || amount < 1000) {
+      return res.status(400).json({ error: 'Minimum deposit is ₦1,000.' });
     }
 
     const user = req.user!;
@@ -149,8 +149,8 @@ export const simulateFundNgn = async (req: AuthRequest, res: Response, next: Nex
     if (!amountNaira || amountNaira <= 0) {
       return res.status(400).json({ error: 'Amount in Naira must be greater than 0' });
     }
-    if (amountNaira < 3000) {
-      return res.status(400).json({ error: 'Minimum NGN deposit is ₦3,000.' });
+    if (amountNaira < 1000) {
+      return res.status(400).json({ error: 'Minimum NGN deposit is ₦1,000.' });
     }
 
     const amountKobo = Math.round(amountNaira * 100);

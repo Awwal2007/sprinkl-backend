@@ -127,8 +127,17 @@ export const createGiveaway = async (req: AuthRequest, res: Response, next: Next
     if (wallet.available < totalRequired) {
       await session.abortTransaction();
       const factor = data.currency === 'NGN' ? 100 : 1000000;
+      const totalReqFormatted = (totalRequired / factor).toLocaleString();
+      const availFormatted = (wallet.available / factor).toLocaleString();
+      const prefix = wallet.available <= 0
+        ? `Your ${data.currency} wallet has no funds. Please fund your wallet first before creating a giveaway.`
+        : `Insufficient ${data.currency} balance. Please fund your wallet first to launch this giveaway.`;
       return res.status(400).json({
-        error: `Insufficient ${data.currency} balance. Total required: ${(totalRequired / factor).toLocaleString()} (Gift: ${(giftPoolSmallest / factor).toLocaleString()} + Fee: ${(platformFee / factor).toLocaleString()}), Available: ${(wallet.available / factor).toLocaleString()}`,
+        error: `${prefix} Total required: ${totalReqFormatted} ${data.currency} (Prize pool: ${(giftPoolSmallest / factor).toLocaleString()} + Fee: ${(platformFee / factor).toLocaleString()}), Available: ${availFormatted} ${data.currency}.`,
+        code: 'INSUFFICIENT_BALANCE',
+        required: totalRequired / factor,
+        available: wallet.available / factor,
+        currency: data.currency,
       });
     }
 
