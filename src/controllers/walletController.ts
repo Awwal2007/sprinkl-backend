@@ -17,7 +17,10 @@ export const getWallet = async (req: AuthRequest, res: Response, next: NextFunct
     const ngnWallet = await LedgerService.getOrCreateWallet(userId, 'NGN');
     const usdtWallet = await LedgerService.getOrCreateWallet(userId, 'USDT');
 
-    const giveawayCount = await Giveaway.countDocuments({ host: userId });
+    const giveawayCount = await Giveaway.countDocuments({
+      host: userId,
+      status: { $ne: 'cancelled' },
+    });
     const isPromo = giveawayCount < 3;
     const remainingPromoCount = Math.max(0, 3 - giveawayCount);
     const feePercentage = isPromo ? 2.5 : 5.0;
