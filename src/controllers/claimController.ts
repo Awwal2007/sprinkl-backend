@@ -5,6 +5,9 @@ import Claim from '../models/Claim';
 import flutterwaveService from '../services/flutterwaveService';
 import cryptoService from '../services/cryptoService';
 import PayoutWorker from '../jobs/payoutWorker';
+import { getClientIp } from '../utils/ipHelper';
+
+export { getClientIp };
 
 const claimSchema = z.object({
   claimantName: z.string().optional(),
@@ -94,27 +97,7 @@ export const resolveBank = async (req: Request, res: Response, next: NextFunctio
   }
 };
 
-export const getClientIp = (req: Request): string => {
-  let ip = '';
-  const forwarded = req.headers['x-forwarded-for'];
-  if (typeof forwarded === 'string') {
-    ip = forwarded.split(',')[0].trim();
-  } else if (Array.isArray(forwarded) && forwarded.length > 0) {
-    ip = forwarded[0].trim();
-  } else if (typeof req.headers['cf-connecting-ip'] === 'string') {
-    ip = (req.headers['cf-connecting-ip'] as string).trim();
-  } else if (typeof req.headers['x-real-ip'] === 'string') {
-    ip = (req.headers['x-real-ip'] as string).trim();
-  } else {
-    ip = req.ip || req.socket?.remoteAddress || '';
-  }
 
-  // Strip IPv6-mapped IPv4 prefix if present (::ffff:1.2.3.4 -> 1.2.3.4)
-  if (ip.startsWith('::ffff:')) {
-    ip = ip.substring(7);
-  }
-  return ip.trim();
-};
 
 export const submitClaim = async (req: Request, res: Response, next: NextFunction) => {
   try {

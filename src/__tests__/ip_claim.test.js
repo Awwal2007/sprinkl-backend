@@ -41,4 +41,24 @@ describe('Client IP Extraction & Anti-Duplicate Normalization', () => {
 
     expect(getClientIp(req)).toBe('203.0.113.99');
   });
+
+  it('should scope rate-limiter keys per giveaway slug and IP', () => {
+    const reqGiveaway1 = {
+      headers: { 'x-forwarded-for': '198.51.100.25' },
+      params: { slug: 'giveaway-one' },
+      socket: {},
+    };
+    const reqGiveaway2 = {
+      headers: { 'x-forwarded-for': '198.51.100.25' },
+      params: { slug: 'giveaway-two' },
+      socket: {},
+    };
+
+    const key1 = `${getClientIp(reqGiveaway1)}:${reqGiveaway1.params.slug}`;
+    const key2 = `${getClientIp(reqGiveaway2)}:${reqGiveaway2.params.slug}`;
+
+    expect(key1).toBe('198.51.100.25:giveaway-one');
+    expect(key2).toBe('198.51.100.25:giveaway-two');
+    expect(key1).not.toBe(key2);
+  });
 });
