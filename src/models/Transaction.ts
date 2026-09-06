@@ -10,7 +10,7 @@ export interface ITransaction extends Document {
   provider: TransactionProvider;
   providerReference: string;
   direction: 'inbound' | 'outbound';
-  currency: 'NGN' | 'USDT';
+  currency: 'NGN' | 'USDT' | 'AIRTIME';
   amount: number;
   status: TransactionStatus;
   rawPayload?: any;
@@ -31,7 +31,7 @@ const transactionSchema = new Schema<ITransaction>(
     providerReference: { type: String, required: true, index: true },
 
     direction: { type: String, enum: ['inbound', 'outbound'], required: true },
-    currency: { type: String, enum: ['NGN', 'USDT'], required: true },
+    currency: { type: String, enum: ['NGN', 'USDT', 'AIRTIME'], required: true },
     amount: { type: Number, required: true },
 
     status: {

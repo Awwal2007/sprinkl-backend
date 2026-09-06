@@ -26,7 +26,7 @@ export interface IGiveaway extends Document {
   description?: string;
   coverImageUrl?: string;
   slug: string;
-  currency: 'NGN' | 'USDT';
+  currency: 'NGN' | 'USDT' | 'AIRTIME';
   amountPerRecipient: number;
   totalSlots: number;
   slotsClaimed: number;
@@ -52,7 +52,7 @@ const giveawaySchema = new Schema<IGiveaway>(
 
     slug: { type: String, required: true, unique: true, index: true },
 
-    currency: { type: String, enum: ['NGN', 'USDT'], required: true },
+    currency: { type: String, enum: ['NGN', 'USDT', 'AIRTIME'], required: true },
 
     amountPerRecipient: { type: Number, required: true, min: 1 },
     totalSlots: { type: Number, required: true, min: 1 },

@@ -84,12 +84,22 @@ export const handleFlutterwaveWebhook = async (req: Request, res: Response, next
           if (hostId) {
             const existing = await LedgerEntry.findOne({ referenceType: 'Claim', referenceId: claim._id, status: 'paid' });
             if (!existing) {
-              const beneficiaryName = claim.destination?.resolvedAccountName || claim.claimantName || 'Claimant';
-              const beneficiaryAccount = claim.destination?.accountNumber || claim.destination?.walletAddress || 'N/A';
-              const beneficiaryBank = claim.destination?.bankName || claim.destination?.chain || 'N/A';
+              const beneficiaryName =
+                claim.destination?.resolvedAccountName ||
+                claim.claimantName ||
+                (claim.currency === 'AIRTIME' ? `${claim.destination?.network || 'VTU'} (${claim.destination?.phoneNumber})` : 'Claimant');
+              const beneficiaryAccount =
+                claim.currency === 'AIRTIME'
+                  ? claim.destination?.phoneNumber || 'N/A'
+                  : claim.destination?.accountNumber || claim.destination?.walletAddress || 'N/A';
+              const beneficiaryBank =
+                claim.currency === 'AIRTIME'
+                  ? claim.destination?.network || 'VTU Airtime'
+                  : claim.destination?.bankName || claim.destination?.chain || 'N/A';
+              const ledgerCurrency = claim.currency === 'AIRTIME' ? 'NGN' : claim.currency;
               await LedgerService.debitPayout({
                 userId: hostId,
-                currency: claim.currency,
+                currency: ledgerCurrency,
                 amount: claim.amount,
                 claimId: claim._id,
                 beneficiaryName,
@@ -125,14 +135,24 @@ export const handleFlutterwaveWebhook = async (req: Request, res: Response, next
             // Write a failed ledger entry for the host's history
             if (hostId) {
               try {
-                const wallet = await LedgerService.getOrCreateWallet(hostId, claim.currency);
-                const beneficiaryName = claim.destination?.resolvedAccountName || claim.claimantName || 'Claimant';
-                const beneficiaryAccount = claim.destination?.accountNumber || claim.destination?.walletAddress || 'N/A';
-                const beneficiaryBank = claim.destination?.bankName || claim.destination?.chain || 'N/A';
+                const ledgerCurrency = claim.currency === 'AIRTIME' ? 'NGN' : claim.currency;
+                const wallet = await LedgerService.getOrCreateWallet(hostId, ledgerCurrency);
+                const beneficiaryName =
+                  claim.destination?.resolvedAccountName ||
+                  claim.claimantName ||
+                  (claim.currency === 'AIRTIME' ? `${claim.destination?.network || 'VTU'} (${claim.destination?.phoneNumber})` : 'Claimant');
+                const beneficiaryAccount =
+                  claim.currency === 'AIRTIME'
+                    ? claim.destination?.phoneNumber || 'N/A'
+                    : claim.destination?.accountNumber || claim.destination?.walletAddress || 'N/A';
+                const beneficiaryBank =
+                  claim.currency === 'AIRTIME'
+                    ? claim.destination?.network || 'VTU Airtime'
+                    : claim.destination?.bankName || claim.destination?.chain || 'N/A';
 
                 await LedgerEntry.create({
                   user: hostId,
-                  currency: claim.currency,
+                  currency: ledgerCurrency,
                   type: 'payout',
                   status: 'failed',
                   amount: claim.amount,

@@ -43,6 +43,18 @@ export class PayoutWorker {
 
         payoutRef = res.transferCode || res.reference;
         rawResponse = res;
+      } else if (claim.currency === 'AIRTIME') {
+        providerName = 'flutterwave';
+        const amountNaira = Math.round(claim.amount / 100);
+        const res = await flutterwaveService.sendAirtimePayout({
+          phoneNumber: claim.destination.phoneNumber || '',
+          amountNaira,
+          network: claim.destination.network || 'VTU',
+          reference: claim.idempotencyKey,
+        });
+
+        payoutRef = res.reference;
+        rawResponse = res;
       } else if (claim.currency === 'USDT') {
         providerName = claim.destination.chain === 'BEP20' ? 'bsc' : 'tron';
         const res = await cryptoService.sendUsdtPayout({
@@ -63,15 +75,24 @@ export class PayoutWorker {
       const beneficiaryName =
         claim.destination?.resolvedAccountName ||
         claim.claimantName ||
-        (claim.currency === 'USDT' ? 'Crypto Claimant' : 'Bank Claimant');
+        (claim.currency === 'AIRTIME'
+          ? `${claim.destination?.network || 'VTU'} (${claim.destination?.phoneNumber})`
+          : claim.currency === 'USDT'
+          ? 'Crypto Claimant'
+          : 'Bank Claimant');
       const beneficiaryAccount =
-        claim.destination?.accountNumber || claim.destination?.walletAddress || 'N/A';
+        claim.currency === 'AIRTIME'
+          ? claim.destination?.phoneNumber || 'N/A'
+          : claim.destination?.accountNumber || claim.destination?.walletAddress || 'N/A';
       const beneficiaryBank =
-        claim.destination?.bankName || claim.destination?.chain || 'N/A';
+        claim.currency === 'AIRTIME'
+          ? claim.destination?.network || 'VTU Airtime'
+          : claim.destination?.bankName || claim.destination?.chain || 'N/A';
 
+      const ledgerCurrency = claim.currency === 'AIRTIME' ? 'NGN' : claim.currency;
       await LedgerService.debitPayout({
         userId: hostId,
-        currency: claim.currency,
+        currency: ledgerCurrency,
         amount: claim.amount,
         claimId: claim._id,
         beneficiaryName,
@@ -125,17 +146,26 @@ export class PayoutWorker {
         const beneficiaryName =
           claim.destination?.resolvedAccountName ||
           claim.claimantName ||
-          (claim.currency === 'USDT' ? 'Crypto Claimant' : 'Bank Claimant');
+          (claim.currency === 'AIRTIME'
+            ? `${claim.destination?.network || 'VTU'} (${claim.destination?.phoneNumber})`
+            : claim.currency === 'USDT'
+            ? 'Crypto Claimant'
+            : 'Bank Claimant');
         const beneficiaryAccount =
-          claim.destination?.accountNumber || claim.destination?.walletAddress || 'N/A';
+          claim.currency === 'AIRTIME'
+            ? claim.destination?.phoneNumber || 'N/A'
+            : claim.destination?.accountNumber || claim.destination?.walletAddress || 'N/A';
         const beneficiaryBank =
-          claim.destination?.bankName || claim.destination?.chain || 'N/A';
+          claim.currency === 'AIRTIME'
+            ? claim.destination?.network || 'VTU Airtime'
+            : claim.destination?.bankName || claim.destination?.chain || 'N/A';
 
-        const wallet = await LedgerService.getOrCreateWallet(hostId, claim.currency);
+        const ledgerCurrency = claim.currency === 'AIRTIME' ? 'NGN' : claim.currency;
+        const wallet = await LedgerService.getOrCreateWallet(hostId, ledgerCurrency);
 
         await LedgerEntry.create({
           user: hostId,
-          currency: claim.currency,
+          currency: ledgerCurrency,
           type: 'payout',
           status: 'failed',
           amount: claim.amount,

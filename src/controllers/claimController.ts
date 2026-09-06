@@ -20,7 +20,23 @@ const claimSchema = z.object({
   chain: z.enum(['TRC20', 'BEP20']).optional(),
   walletAddress: z.string().optional(),
   deviceFingerprint: z.string().optional(),
+  phoneNumber: z.string().optional(),
+  network: z.string().optional(),
 });
+
+export const detectCarrier = (phone: string): 'MTN' | 'AIRTEL' | 'GLO' | '9MOBILE' | null => {
+  const prefix = phone.slice(0, 4);
+  const mtnPrefixes = ['0803', '0806', '0703', '0706', '0813', '0816', '0810', '0814', '0903', '0906', '0913', '0916'];
+  const airtelPrefixes = ['0802', '0808', '0708', '0812', '0701', '0902', '0901', '0904', '0907', '0912'];
+  const gloPrefixes = ['0805', '0807', '0705', '0815', '0811', '0905', '0915'];
+  const nineMobilePrefixes = ['0809', '0817', '0818', '0909', '0908'];
+
+  if (mtnPrefixes.includes(prefix)) return 'MTN';
+  if (airtelPrefixes.includes(prefix)) return 'AIRTEL';
+  if (gloPrefixes.includes(prefix)) return 'GLO';
+  if (nineMobilePrefixes.includes(prefix)) return '9MOBILE';
+  return null;
+};
 
 export const getPublicGiveaway = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -97,8 +113,6 @@ export const resolveBank = async (req: Request, res: Response, next: NextFunctio
   }
 };
 
-
-
 export const submitClaim = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const data = claimSchema.parse(req.body);
@@ -134,6 +148,30 @@ export const submitClaim = async (req: Request, res: Response, next: NextFunctio
         resolvedAccountName: data.resolvedAccountName || data.claimantName,
         normalized: normalizedDestination,
       };
+    } else if (giveaway.currency === 'AIRTIME') {
+      const rawPhone = (data.phoneNumber || data.claimantPhone || '').trim().replace(/[^0-9+]/g, '');
+      let cleanPhone = rawPhone;
+      if (cleanPhone.startsWith('+234')) {
+        cleanPhone = '0' + cleanPhone.slice(4);
+      } else if (cleanPhone.startsWith('234') && cleanPhone.length === 13) {
+        cleanPhone = '0' + cleanPhone.slice(3);
+      }
+
+      if (!/^0[789][01]\d{8}$/.test(cleanPhone)) {
+        return res.status(400).json({
+          error: 'Please enter a valid 11-digit Nigerian phone number (e.g. 08012345678)',
+        });
+      }
+
+      const detected = detectCarrier(cleanPhone);
+      const chosenNetwork = (data.network?.toUpperCase() || detected || 'MTN') as 'MTN' | 'AIRTEL' | 'GLO' | '9MOBILE';
+
+      normalizedDestination = `AIRTIME:${cleanPhone}`;
+      destinationObj = {
+        phoneNumber: cleanPhone,
+        network: chosenNetwork,
+        normalized: normalizedDestination,
+      };
     } else if (giveaway.currency === 'USDT') {
       const chain = data.chain || 'TRC20';
       if (!data.walletAddress) {
@@ -152,7 +190,7 @@ export const submitClaim = async (req: Request, res: Response, next: NextFunctio
       };
     }
 
-    // 1. Check duplicate claim by destination (bank account or wallet address)
+    // 1. Check duplicate claim by destination (bank account, phone number, or wallet address)
     const existingClaimByDest = await Claim.findOne({
       giveaway: giveaway._id,
       'destination.normalized': normalizedDestination,
@@ -161,7 +199,7 @@ export const submitClaim = async (req: Request, res: Response, next: NextFunctio
     if (existingClaimByDest) {
       return res.status(409).json({
         error:
-          'You have already claimed this giveaway! Each bank account or wallet address can only claim once.',
+          'You have already claimed this giveaway! Each bank account, phone number, or wallet address can only claim once.',
       });
     }
 
@@ -216,7 +254,14 @@ export const submitClaim = async (req: Request, res: Response, next: NextFunctio
     try {
       claim = new Claim({
         giveaway: giveaway._id,
-        claimantName: data.claimantName || data.resolvedAccountName || (data.walletAddress ? `${data.chain || 'USDT'} Claimant` : 'Sprinkl Claimant'),
+        claimantName:
+          data.claimantName ||
+          data.resolvedAccountName ||
+          (giveaway.currency === 'AIRTIME'
+            ? `${destinationObj.network || 'VTU'} (${destinationObj.phoneNumber})`
+            : data.walletAddress
+            ? `${data.chain || 'USDT'} Claimant`
+            : 'Sprinkl Claimant'),
         claimantContact: {
           email: data.claimantEmail || '',
           phone: data.claimantPhone || '',

@@ -14,6 +14,8 @@ export interface IClaimDestination {
   resolvedAccountName?: string;
   chain?: 'TRC20' | 'BEP20' | null;
   walletAddress?: string;
+  phoneNumber?: string;
+  network?: string;
   normalized: string;
 }
 
@@ -33,7 +35,7 @@ export interface IClaim extends Document {
     email?: string;
     phone?: string;
   };
-  currency: 'NGN' | 'USDT';
+  currency: 'NGN' | 'USDT' | 'AIRTIME';
   destination: IClaimDestination;
   amount: number;
   status: ClaimStatus;
@@ -55,7 +57,7 @@ const claimSchema = new Schema<IClaim>(
       phone: { type: String, trim: true },
     },
 
-    currency: { type: String, enum: ['NGN', 'USDT'], required: true },
+    currency: { type: String, enum: ['NGN', 'USDT', 'AIRTIME'], required: true },
 
     destination: {
       bankCode: { type: String, trim: true },
@@ -65,6 +67,9 @@ const claimSchema = new Schema<IClaim>(
 
       chain: { type: String, enum: ['TRC20', 'BEP20', null], default: null },
       walletAddress: { type: String, trim: true },
+
+      phoneNumber: { type: String, trim: true },
+      network: { type: String, trim: true },
 
       normalized: { type: String, required: true },
     },

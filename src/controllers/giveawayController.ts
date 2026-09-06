@@ -13,7 +13,7 @@ const createGiveawaySchema = z.object({
   title: z.string().min(3).max(120),
   description: z.string().max(2000).optional(),
   coverImageUrl: z.string().optional(),
-  currency: z.enum(['NGN', 'USDT']),
+  currency: z.enum(['NGN', 'USDT', 'AIRTIME']),
   amountPerRecipient: z.number().positive(),
   totalSlots: z.number().int().min(1),
   expiresAt: z.string().optional(),
@@ -35,18 +35,24 @@ export const createGiveaway = async (req: AuthRequest, res: Response, next: Next
     const userId = req.user!._id;
 
     let amountPerRecipientSmallest = 0;
-    if (data.currency === 'NGN') {
+    if (data.currency === 'NGN' || data.currency === 'AIRTIME') {
       amountPerRecipientSmallest = Math.round(data.amountPerRecipient * 100);
     } else {
       amountPerRecipientSmallest = Math.round(data.amountPerRecipient * 1000000);
     }
 
     // A. Minimum Amount Per Winner Check
-    // Admins have a lower floor (₦100 NGN / $0.10 USDT) for testing & flexibility
+    // Admins have a lower floor (₦100 NGN / $0.10 USDT) for testing & flexibility. Airtime min is ₦50.
     const isAdmin = (req.user as any)?.role === 'admin';
     const ngnMin = isAdmin ? 100 : 300;
     const usdtMin = isAdmin ? 0.1 : 0.2;
 
+    if (data.currency === 'AIRTIME' && data.amountPerRecipient < 50) {
+      await session.abortTransaction();
+      return res.status(400).json({
+        error: 'Minimum airtime payout per recipient is ₦50.',
+      });
+    }
     if (data.currency === 'NGN' && data.amountPerRecipient < ngnMin) {
       await session.abortTransaction();
       return res.status(400).json({
@@ -80,7 +86,7 @@ export const createGiveaway = async (req: AuthRequest, res: Response, next: Next
     let maxFee = Infinity;
     let isWhaleTier = false;
 
-    if (data.currency === 'NGN') {
+    if (data.currency === 'NGN' || data.currency === 'AIRTIME') {
       minFee = isPromo ? 15000 : 30000; // ₦150 promo floor, ₦300 standard floor
       if (giftPoolSmallest >= 100000000) { // >= ₦1,000,000
         isWhaleTier = true;
@@ -104,16 +110,16 @@ export const createGiveaway = async (req: AuthRequest, res: Response, next: Next
     // Payout / Payment Threshold Compliance Check (default: ₦500,000 / $500 USDT)
     const hostUser = await User.findById(userId).session(session);
     const hostThreshold = hostUser?.kyc?.payoutReviewThreshold || 50000000;
-    const isExceeded = data.currency === 'NGN'
+    const isExceeded = (data.currency === 'NGN' || data.currency === 'AIRTIME')
       ? giftPoolSmallest > hostThreshold
       : giftPoolSmallest > 500000000; // $500 USDT
 
     if (!isAdmin && isExceeded) {
       await session.abortTransaction();
-      const limitFormatted = data.currency === 'NGN'
+      const limitFormatted = (data.currency === 'NGN' || data.currency === 'AIRTIME')
         ? `₦${(hostThreshold / 100).toLocaleString()}`
         : '$500 USDT';
-      const attemptedFormatted = data.currency === 'NGN'
+      const attemptedFormatted = (data.currency === 'NGN' || data.currency === 'AIRTIME')
         ? `₦${(giftPoolSmallest / 100).toLocaleString()}`
         : `$${(giftPoolSmallest / 1000000).toLocaleString()} USDT`;
       return res.status(403).json({
@@ -125,22 +131,23 @@ export const createGiveaway = async (req: AuthRequest, res: Response, next: Next
       });
     }
 
-    // Check host's available balance
-    const wallet = await LedgerService.getOrCreateWallet(userId, data.currency, session);
+    // Check host's available balance (Airtime is funded directly from host's NGN wallet)
+    const walletCurrency = data.currency === 'AIRTIME' ? 'NGN' : data.currency;
+    const wallet = await LedgerService.getOrCreateWallet(userId, walletCurrency, session);
     if (wallet.available < totalRequired) {
       await session.abortTransaction();
-      const factor = data.currency === 'NGN' ? 100 : 1000000;
+      const factor = walletCurrency === 'NGN' ? 100 : 1000000;
       const totalReqFormatted = (totalRequired / factor).toLocaleString();
       const availFormatted = (wallet.available / factor).toLocaleString();
       const prefix = wallet.available <= 0
-        ? `Your ${data.currency} wallet has no funds. Please fund your wallet first before creating a giveaway.`
-        : `Insufficient ${data.currency} balance. Please fund your wallet first to launch this giveaway.`;
+        ? `Your ${walletCurrency} wallet has no funds. Please fund your ${walletCurrency} wallet first before creating a giveaway.`
+        : `Insufficient ${walletCurrency} balance. Please fund your ${walletCurrency} wallet first to launch this giveaway.`;
       return res.status(400).json({
-        error: `${prefix} Total required: ${totalReqFormatted} ${data.currency} (Prize pool: ${(giftPoolSmallest / factor).toLocaleString()} + Fee: ${(platformFee / factor).toLocaleString()}), Available: ${availFormatted} ${data.currency}.`,
+        error: `${prefix} Total required: ${totalReqFormatted} ${walletCurrency} (Prize pool: ${(giftPoolSmallest / factor).toLocaleString()} + Fee: ${(platformFee / factor).toLocaleString()}), Available: ${availFormatted} ${walletCurrency}.`,
         code: 'INSUFFICIENT_BALANCE',
         required: totalRequired / factor,
         available: wallet.available / factor,
-        currency: data.currency,
+        currency: walletCurrency,
       });
     }
 
@@ -151,7 +158,7 @@ export const createGiveaway = async (req: AuthRequest, res: Response, next: Next
     await LedgerService.reserveForGiveaway(
       {
         userId,
-        currency: data.currency,
+        currency: walletCurrency,
         amount: giftPoolSmallest,
         giveawayId: giveawayIdPlaceholder,
       },
@@ -163,7 +170,7 @@ export const createGiveaway = async (req: AuthRequest, res: Response, next: Next
       await LedgerService.deductPlatformFee(
         {
           userId,
-          currency: data.currency,
+          currency: walletCurrency,
           amount: platformFee,
           giveawayId: giveawayIdPlaceholder,
         },
@@ -337,9 +344,10 @@ export const transferGiveawayFundsToMainWallet = async (req: AuthRequest, res: R
     const amountDisbursed = paidClaimsCount * giveaway.amountPerRecipient;
     const theoreticalUnspent = Math.max(0, giveaway.totalReservedAmount - amountDisbursed);
 
+    const walletCurrency = giveaway.currency === 'AIRTIME' ? 'NGN' : giveaway.currency;
     const wallet = await WalletAccount.findOne({
       user: req.user!._id,
-      currency: giveaway.currency,
+      currency: walletCurrency,
     }).session(session);
 
     const actualReserved = wallet?.reserved ?? 0;
@@ -350,7 +358,7 @@ export const transferGiveawayFundsToMainWallet = async (req: AuthRequest, res: R
       await LedgerService.releaseReservedFunds(
         {
           userId: req.user!._id,
-          currency: giveaway.currency,
+          currency: walletCurrency,
           amount: unspentAmount,
           giveawayId: giveaway._id,
           status: 'cancelled',
@@ -366,9 +374,9 @@ export const transferGiveawayFundsToMainWallet = async (req: AuthRequest, res: R
     await session.commitTransaction();
 
     const formattedAmount =
-      giveaway.currency === 'NGN'
-        ? `₦${(unspentAmount / 100).toLocaleString()}`
-        : `${(unspentAmount / 1000000).toLocaleString()} USDT`;
+      giveaway.currency === 'USDT'
+        ? `${(unspentAmount / 1000000).toLocaleString()} USDT`
+        : `₦${(unspentAmount / 100).toLocaleString()}`;
 
     return res.json({
       message: `Successfully transferred ${formattedAmount} back to your main wallet!`,

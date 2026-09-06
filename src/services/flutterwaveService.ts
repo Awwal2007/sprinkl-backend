@@ -223,6 +223,87 @@ export class FlutterwaveService {
       throw new Error(msg);
     }
   }
+
+  async sendAirtimePayout(params: IAirtimeParams): Promise<IAirtimeResult> {
+    const cleanRef = (params.reference || `AIR_${Date.now()}`).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 100);
+    try {
+      const hasLiveKey = this.secretKey && !this.secretKey.includes('mock') && this.secretKey.startsWith('FLW');
+      if (!hasLiveKey) {
+        console.log(`[Flutterwave Airtime Sandbox] Simulated recharge of ₦${params.amountNaira} to ${params.phoneNumber} (${params.network || 'VTU'})`);
+        return {
+          status: 'success',
+          reference: cleanRef,
+          message: `Airtime of ₦${params.amountNaira} delivered to ${params.phoneNumber}`,
+          network: params.network,
+          phoneNumber: params.phoneNumber,
+          raw: { simulated: true },
+        };
+      }
+
+      // Live Flutterwave Bills API for Airtime
+      console.log(`[Flutterwave Airtime Dispatch] Sending ₦${params.amountNaira} to ${params.phoneNumber} (Ref: ${cleanRef})...`);
+      const response = await axios.post(
+        `${this.baseUrl}/bills`,
+        {
+          country: 'NG',
+          customer: params.phoneNumber,
+          amount: params.amountNaira,
+          recurrence: 'ONCE',
+          type: 'AIRTIME',
+          reference: cleanRef,
+        },
+        { headers: this.headers }
+      );
+
+      if (response.data && (response.data.status === 'success' || response.data.status === 'pending')) {
+        console.log(`[Flutterwave Airtime Success] Recharged ${params.phoneNumber} successfully!`, response.data.data);
+        return {
+          status: response.data.status,
+          reference: response.data.data?.reference || cleanRef,
+          message: response.data.message || 'Airtime recharge successful',
+          network: params.network,
+          phoneNumber: params.phoneNumber,
+          raw: response.data,
+        };
+      }
+
+      throw new Error(response.data?.message || 'Airtime recharge failed');
+    } catch (err: any) {
+      const msg = err.response?.data?.message || err.message || 'Flutterwave airtime dispatch failed';
+      console.error('[Flutterwave Airtime Error]:', msg);
+
+      // Only fallback to mock if no real Flutterwave key is set
+      const hasLiveKey = this.secretKey && !this.secretKey.includes('mock') && this.secretKey.startsWith('FLW');
+      if (!hasLiveKey) {
+        return {
+          status: 'success',
+          reference: cleanRef,
+          message: `Airtime of ₦${params.amountNaira} delivered to ${params.phoneNumber} (Dev Sandbox)`,
+          network: params.network,
+          phoneNumber: params.phoneNumber,
+          raw: { fallback: true },
+        };
+      }
+
+      throw new Error(msg);
+    }
+  }
+}
+
+export interface IAirtimeParams {
+  phoneNumber: string;
+  amountNaira: number;
+  network?: string;
+  reference?: string;
+}
+
+export interface IAirtimeResult {
+  status: string;
+  reference: string;
+  message?: string;
+  network?: string;
+  phoneNumber?: string;
+  raw?: any;
 }
 
 export default new FlutterwaveService();
