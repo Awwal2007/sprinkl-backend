@@ -192,7 +192,11 @@ export const createGiveaway = async (req: AuthRequest, res: Response, next: Next
       platformFee,
       status: 'active',
       expiresAt: data.expiresAt ? new Date(data.expiresAt) : null,
-      settings: data.settings || {},
+      settings: {
+        ...(data.settings || {}),
+        // Only super admins can enforce platform-wide first-time claimant restriction
+        restrictFirstTimeClaimantsOnly: isAdmin ? Boolean(data.settings?.restrictFirstTimeClaimantsOnly) : false,
+      },
     });
 
     await giveaway.save({ session });

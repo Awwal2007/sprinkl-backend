@@ -5,9 +5,9 @@ import Claim from '../models/Claim';
 import flutterwaveService from '../services/flutterwaveService';
 import cryptoService from '../services/cryptoService';
 import PayoutWorker from '../jobs/payoutWorker';
-import { getClientIp } from '../utils/ipHelper';
+import { getClientIp, isLocalOrPrivateIp } from '../utils/ipHelper';
 
-export { getClientIp };
+export { getClientIp, isLocalOrPrivateIp };
 
 const claimSchema = z.object({
   claimantName: z.string().optional(),
@@ -203,18 +203,38 @@ export const submitClaim = async (req: Request, res: Response, next: NextFunctio
       });
     }
 
-    // 2. Check duplicate claim by IP address (enforce one claim per IP address per giveaway)
+    // 2. Check duplicate claim by device fingerprint (enforce 1 claim per physical device/browser)
+    if (data.deviceFingerprint) {
+      const existingClaimByDevice = await Claim.findOne({
+        giveaway: giveaway._id,
+        'meta.deviceFingerprint': data.deviceFingerprint,
+        status: { $in: ['pending', 'processing', 'paid'] },
+      });
+      if (existingClaimByDevice) {
+        return res.status(409).json({
+          error:
+            'You have already claimed this giveaway on this device! Each participant is limited to one claim per drop.',
+        });
+      }
+    }
+
+    // 3. Network abuse & bot-drain protection (allow multiple legitimate claims per public IP for Wi-Fi, offices, and mobile CGNAT)
     const clientIp = getClientIp(req);
-    if (clientIp) {
-      const existingClaimByIp = await Claim.findOne({
+    const isLocalOrPrivate = isLocalOrPrivateIp(clientIp);
+
+    if (clientIp && !isLocalOrPrivate) {
+      // Allow up to 10 claims from the same public IP on a single giveaway to accommodate shared networks,
+      // while preventing automated bot scripts from draining giveaways from a single IP address.
+      const MAX_CLAIMS_PER_IP = 10;
+      const claimsFromSameIp = await Claim.countDocuments({
         giveaway: giveaway._id,
         'meta.ipAddress': clientIp,
         status: { $in: ['pending', 'processing', 'paid'] },
       });
-      if (existingClaimByIp) {
-        return res.status(409).json({
+      if (claimsFromSameIp >= MAX_CLAIMS_PER_IP) {
+        return res.status(429).json({
           error:
-            'You have already claimed this giveaway from this network or device! Each IP address can only claim once to prevent duplicate claims.',
+            'Network claim limit reached for this giveaway. Please try again using your cellular mobile data.',
         });
       }
     }

@@ -101,6 +101,7 @@ const claimSchema = new Schema<IClaim>(
 
 claimSchema.index({ giveaway: 1, 'destination.normalized': 1 }, { unique: true });
 claimSchema.index({ giveaway: 1, 'meta.ipAddress': 1 });
+claimSchema.index({ giveaway: 1, 'meta.deviceFingerprint': 1 });
 claimSchema.index({ 'destination.normalized': 1, status: 1 });
 
 export default model<IClaim>('Claim', claimSchema);
