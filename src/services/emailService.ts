@@ -16,8 +16,8 @@ class EmailService {
   /**
    * Send email verification link
    */
-  async sendVerificationEmail(email: string, fullName: string, token: string) {
-    const domain = process.env.DOMAIN || 'https://sprinkl.biz';
+  async sendVerificationEmail(email: string, fullName: string, token: string, clientOrigin?: string) {
+    const domain = clientOrigin || process.env.DOMAIN || 'https://www.sprinkl.biz';
     const verifyUrl = `${domain}/verify-email?token=${token}`;
 
     const html = `

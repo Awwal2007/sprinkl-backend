@@ -23,6 +23,14 @@ export const authenticateToken = async (req: AuthRequest, res: Response, next: N
       return res.status(401).json({ error: 'User account not found or deactivated', code: 'USER_NOT_FOUND' });
     }
 
+    if (!user.emailVerified) {
+      return res.status(403).json({
+        error: 'Please verify your email address to access your account.',
+        code: 'EMAIL_NOT_VERIFIED',
+        emailVerified: false,
+      });
+    }
+
     req.user = user;
     next();
   } catch (err: any) {

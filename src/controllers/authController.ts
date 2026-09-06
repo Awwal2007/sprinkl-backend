@@ -64,24 +64,21 @@ export const signup = async (req: Request, res: Response, next: NextFunction) =>
     await user.save();
 
     // Send verification email via Resend
-    await emailService.sendVerificationEmail(user.email, user.fullName, verificationToken);
+    const clientOrigin = req.get('origin') || (req.headers.origin as string | undefined);
+    await emailService.sendVerificationEmail(user.email, user.fullName, verificationToken, clientOrigin);
 
-    const { accessToken, refreshToken } = generateTokens(user._id);
-
-    user.refreshTokenHash = await bcrypt.hash(refreshToken, 10);
-    await user.save();
-
+    // Strict security: Do NOT issue tokens on signup. User must verify email first.
     return res.status(201).json({
-      message: 'Signup successful! Please check your email to verify your account.',
-      accessToken,
-      refreshToken,
+      message: 'Signup successful! Please check your email to verify your account before logging in.',
+      email: user.email,
+      emailVerified: false,
       user: {
         id: user._id,
         fullName: user.fullName,
         email: user.email,
         phone: user.phone,
         role: user.role,
-        emailVerified: user.emailVerified,
+        emailVerified: false,
         kyc: user.kyc,
       },
     });
@@ -112,11 +109,26 @@ export const verifyEmail = async (req: Request, res: Response, next: NextFunctio
     user.emailVerified = true;
     user.verificationToken = undefined;
     user.verificationTokenExpires = undefined;
+
+    // Issue tokens now that the account is officially verified
+    const { accessToken, refreshToken } = generateTokens(user._id);
+    user.refreshTokenHash = await bcrypt.hash(refreshToken, 10);
     await user.save();
 
     return res.json({
       message: 'Email successfully verified! Your host account is active.',
       emailVerified: true,
+      accessToken,
+      refreshToken,
+      user: {
+        id: user._id,
+        fullName: user.fullName,
+        email: user.email,
+        phone: user.phone,
+        role: user.role,
+        emailVerified: user.emailVerified,
+        kyc: user.kyc,
+      },
     });
   } catch (err) {
     next(err);
@@ -145,7 +157,8 @@ export const resendVerificationEmail = async (req: any, res: Response, next: Nex
     user.verificationTokenExpires = new Date(Date.now() + 24 * 60 * 60 * 1000);
     await user.save();
 
-    await emailService.sendVerificationEmail(user.email, user.fullName, verificationToken);
+    const clientOrigin = req.get('origin') || (req.headers.origin as string | undefined);
+    await emailService.sendVerificationEmail(user.email, user.fullName, verificationToken, clientOrigin);
 
     return res.json({ message: 'A new verification link has been sent to your email!' });
   } catch (err) {
@@ -221,6 +234,14 @@ export const refreshToken = async (req: Request, res: Response, next: NextFuncti
     const isMatch = await bcrypt.compare(token, user.refreshTokenHash);
     if (!isMatch) {
       return res.status(401).json({ error: 'Invalid refresh token', code: 'REFRESH_TOKEN_INVALID' });
+    }
+
+    if (!user.emailVerified) {
+      return res.status(403).json({
+        error: 'Please verify your email address before logging in.',
+        code: 'EMAIL_NOT_VERIFIED',
+        emailVerified: false,
+      });
     }
 
     const { accessToken, refreshToken: newRefreshToken } = generateTokens(user._id);
