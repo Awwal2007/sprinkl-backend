@@ -18,7 +18,9 @@ app.set('trust proxy', 1);
 app.use(helmet());
 app.use(
   cors({
-    origin: '*',
+    origin: process.env.NODE_ENV === 'production' 
+      ? ['https://sprinkl.biz', 'https://www.sprinkl.biz']
+      : ['https://sprinkl.biz', 'https://www.sprinkl.biz', 'http://localhost:5173', 'http://localhost:3000'],
     credentials: true,
   })
 );
