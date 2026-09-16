@@ -55,7 +55,7 @@ function generateBotReply(text: string, hasAttachments: boolean): string {
     lower.includes('virtual account') ||
     lower.includes('dva')
   ) {
-    return 'Here is how wallet funding works on Sprinkl:\n\n• Nigerian Naira (NGN): Instant bank transfers via your dedicated virtual account or Flutterwave checkout credit your wallet automatically within seconds.\n• USDT (Crypto): Multi-user TRC20 and BEP20 automated gateway deposits are currently undergoing merchant verification and will activate shortly.\n\nIf you have already sent funds and need help verifying a transaction, please attach your payment receipt or request a human agent!';
+    return 'Here is how wallet funding works on Sprinkl:\n\n• Nigerian Naira (NGN): Instant bank transfers via your dedicated virtual account or Flutterwave checkout credit your wallet automatically within seconds.\n• USDT (Crypto): Automated deposits via TRC20 and BEP20 credit your wallet automatically upon blockchain confirmation.\n\nIf you have already sent funds and need help verifying a transaction, please attach your payment receipt or request a human agent!';
   }
 
   // 4. Failed Payouts / Cancellations / Refunds
