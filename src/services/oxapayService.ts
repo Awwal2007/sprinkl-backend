@@ -122,6 +122,75 @@ export class OxaPayService {
     });
     return res.data;
   }
+
+  /**
+   * Send a crypto payout using OxaPay v1 Payout API.
+   * Disburses USDT directly from the merchant's OxaPay balance without
+   * requiring on-chain private keys or gas funds.
+   */
+  static async sendPayout(params: {
+    address: string;
+    amountUsdt: number;
+    chain: 'TRC20' | 'BEP20';
+    description?: string;
+  }): Promise<{ trackId: string; txHash: string; status: string; explorerUrl: string }> {
+    const payoutKey = process.env.OXAPAY_PAYOUT_API_KEY;
+    if (!payoutKey) {
+      throw new Error(
+        'OXAPAY_PAYOUT_API_KEY is not configured in .env. Generate a Payout API key in your OxaPay dashboard.'
+      );
+    }
+
+    const network = CHAIN_TO_OXAPAY_NETWORK[params.chain] || params.chain;
+
+    try {
+      const res = await axios.post(
+        `${this.baseUrl}/v1/payout`,
+        {
+          address: params.address,
+          currency: 'USDT',
+          amount: params.amountUsdt,
+          network,
+          description: params.description || 'Sprinkl Giveaway Payout',
+        },
+        {
+          headers: {
+            payout_api_key: payoutKey,
+            'Content-Type': 'application/json',
+          },
+        }
+      );
+
+      if (res.data?.status === 200 && res.data?.data) {
+        const d = res.data.data;
+        const trackId = String(d.track_id || d.id || '');
+        const txHash = d.tx_hash || d.txId || trackId;
+        const explorerUrl =
+          params.chain === 'TRC20'
+            ? `https://tronscan.org/#/transaction/${txHash}`
+            : `https://bscscan.com/tx/${txHash}`;
+
+        return {
+          trackId,
+          txHash,
+          status: d.status || 'processing',
+          explorerUrl,
+        };
+      }
+
+      throw new Error(
+        res.data?.message || `OxaPay payout returned status: ${res.data?.status}`
+      );
+    } catch (err: any) {
+      const msg =
+        err.response?.data?.message ||
+        err.response?.data?.error ||
+        err.message ||
+        'OxaPay payout API failed';
+      console.error('[OxaPay Payout Error]:', msg, err.response?.data);
+      throw new Error(`OxaPay payout failed: ${msg}`);
+    }
+  }
 }
 
 export default OxaPayService;

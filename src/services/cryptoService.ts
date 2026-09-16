@@ -1,5 +1,6 @@
 import TronWeb from 'tronweb';
 import { ethers } from 'ethers';
+import OxaPayService from './oxapayService';
 
 // USDT TRC20 Contract address on Tron mainnet
 const USDT_TRC20_CONTRACT = 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t';
@@ -211,6 +212,30 @@ export class CryptoService {
       throw new Error(`Invalid ${chain} wallet address: ${destinationAddress}`);
     }
 
+    // 1. Prefer OxaPay Payout API if configured (no hot wallet private keys or gas needed)
+    if (process.env.OXAPAY_PAYOUT_API_KEY) {
+      const amountUsdtDecimal = amountUsdtInteger / 1_000_000;
+      console.log(
+        `[CryptoService] Routing payout via OxaPay API: ${amountUsdtDecimal} USDT to ${destinationAddress} (${chain})`
+      );
+      const res = await OxaPayService.sendPayout({
+        address: destinationAddress,
+        amountUsdt: amountUsdtDecimal,
+        chain,
+        description: `Sprinkl Giveaway ${reference || ''}`.trim(),
+      });
+
+      return {
+        success: true,
+        txHash: res.txHash || res.trackId,
+        chain,
+        amount: amountUsdtInteger,
+        destination: destinationAddress,
+        explorerUrl: res.explorerUrl,
+      };
+    }
+
+    // 2. Fallback to direct on-chain hot wallet
     if (chain === 'TRC20') {
       return await this.sendTrc20Usdt(destinationAddress, amountUsdtInteger);
     } else if (chain === 'BEP20') {
