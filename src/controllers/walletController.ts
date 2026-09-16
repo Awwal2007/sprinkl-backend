@@ -764,24 +764,48 @@ export const manualResolveDeposit = async (req: AuthRequest, res: Response, next
           const amount = Number(oxaRes.payAmount || oxaRes.amount || 0);
           const amountUsdtUnits = Math.round(amount * 1000000);
 
-          const tx = await Transaction.create({
-            user: user._id,
+          // Check for existing pending TX (created when invoice was opened)
+          const pendingTx = await Transaction.findOne({
             provider: 'oxapay',
             providerReference: cleanRef,
-            direction: 'inbound',
-            currency: 'USDT',
-            amount: amountUsdtUnits,
-            status: 'success',
-            rawPayload: oxaRes,
+            status: 'pending',
           });
 
-          await LedgerService.creditWallet({
-            userId: user._id,
-            currency: 'USDT',
-            amount: amountUsdtUnits,
-            referenceType: 'CryptoDeposit',
-            referenceId: tx._id,
-          });
+          if (pendingTx) {
+            // Update the pending TX to success and credit wallet
+            pendingTx.status = 'success';
+            pendingTx.amount = amountUsdtUnits;
+            pendingTx.rawPayload = oxaRes;
+            await pendingTx.save();
+
+            await LedgerService.creditWallet({
+              userId: user._id,
+              currency: 'USDT',
+              amount: amountUsdtUnits,
+              referenceType: 'CryptoDeposit',
+              referenceId: pendingTx._id,
+            });
+          } else {
+            // No pending TX found — create a fresh success TX
+            const tx = await Transaction.create({
+              user: user._id,
+              provider: 'oxapay',
+              providerReference: cleanRef,
+              direction: 'inbound',
+              currency: 'USDT',
+              amount: amountUsdtUnits,
+              status: 'success',
+              rawPayload: oxaRes,
+            });
+
+            await LedgerService.creditWallet({
+              userId: user._id,
+              currency: 'USDT',
+              amount: amountUsdtUnits,
+              referenceType: 'CryptoDeposit',
+              referenceId: tx._id,
+            });
+          }
 
           return res.json({
             success: true,
