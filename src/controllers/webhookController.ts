@@ -274,12 +274,14 @@ export const handleOxaPayWebhook = async (req: Request, res: Response, next: Nex
     const payload = req.body || {};
     console.log('[OxaPay Webhook Received]:', JSON.stringify(payload));
 
-    const trackId = payload.trackId || payload.track_id || payload.trackID;
+    // Support both legacy (camelCase) and v1 (snake_case) webhook payloads
+    const trackId = payload.track_id || payload.trackId || payload.trackID;
     const status = (payload.status || '').toString();
-    const amount = payload.amount || payload.payAmount || payload.pay_amount || payload.value;
-    const orderId = payload.orderId || payload.order_id || payload.orderID;
-    const txID = payload.txID || payload.txId || payload.txid || payload.tx_id;
-    const network = payload.network || payload.chain || 'TRC20';
+    // v1 sends pay_amount (actual paid amount) — prefer it over invoice amount
+    const amount = payload.pay_amount || payload.payAmount || payload.amount || payload.value;
+    const orderId = payload.order_id || payload.orderId || payload.orderID;
+    const txID = payload.tx_hash || payload.txID || payload.txId || payload.txid || payload.tx_id;
+    const network = payload.network || payload.chain || 'unknown';
 
     const statusLower = status.toLowerCase();
     const isPaid = statusLower === 'paid' || statusLower === 'complete' || statusLower === 'completed' || statusLower === 'success';
@@ -301,13 +303,25 @@ export const handleOxaPayWebhook = async (req: Request, res: Response, next: Nex
         user = await User.findOne({ email: payload.email });
       }
 
+      // 3. Try looking up via pending Transaction record (created when invoice was opened)
+      if (!user && trackId) {
+        const pendingTx = await Transaction.findOne({
+          provider: 'oxapay',
+          providerReference: String(trackId),
+        });
+        if (pendingTx?.user) {
+          user = await User.findById(pendingTx.user);
+        }
+      }
+
       if (!user) {
-        console.warn('[OxaPay Webhook] User not found for orderId:', orderId, 'email:', payload.email);
+        console.warn('[OxaPay Webhook] User not found for orderId:', orderId, 'trackId:', trackId, 'email:', payload.email);
         return res.status(200).send('User not found');
       }
 
       const providerRef = String(trackId || txID || orderId);
       const amountUsdtUnits = Math.round(Number(amount) * 1000000);
+
 
       const existingTx = await Transaction.findOne({
         provider: 'oxapay',

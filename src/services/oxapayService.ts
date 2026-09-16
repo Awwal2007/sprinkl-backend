@@ -8,7 +8,7 @@ export interface IOxaPayInvoiceParams {
 }
 
 export interface IOxaPayInvoiceResult {
-  trackId: number;
+  trackId: string;
   payAddress: string;
   qrCode?: string;
   payLink?: string;
@@ -17,6 +17,15 @@ export interface IOxaPayInvoiceResult {
   network: string;
   expiredAt?: number;
 }
+
+/**
+ * Maps Sprinkl chain identifiers to OxaPay v1 network names.
+ * OxaPay v1 API uses full network names as returned by /api/currencies.
+ */
+const CHAIN_TO_OXAPAY_NETWORK: Record<string, string> = {
+  TRC20: 'Tron',
+  BEP20: 'BSC',
+};
 
 export class OxaPayService {
   private static baseUrl = 'https://api.oxapay.com';
@@ -32,84 +41,78 @@ export class OxaPayService {
   }
 
   /**
-   * Create an in-modal White-Label payment address or hosted invoice.
-   * If white-label request succeeds, returns the exact payment address & QR code
-   * so users never have to leave the Sprinkl dashboard.
+   * Create a White-Label deposit address using the OxaPay v1 API.
+   * This returns a direct payment address + QR code for the exact network chosen
+   * in Sprinkl, so users never need to leave the dashboard or re-select a network.
+   *
+   * Network mapping:
+   *   TRC20 → Tron (Tron Network, USDT-TRC20)
+   *   BEP20 → BSC  (Binance Smart Chain, USDT-BEP20)
    */
   static async createDepositInvoice(params: IOxaPayInvoiceParams): Promise<IOxaPayInvoiceResult> {
     const merchantKey = this.getMerchantKey();
     const domain = process.env.DOMAIN || 'https://sprinkl.biz';
-    const callbackUrl = `${domain}/api/webhooks/oxapay`;
+    const callbackUrl = `https://api.sprinkl.biz/api/webhooks/oxapay`;
     const orderId = `USDT_DEP_${params.userId}_${Date.now()}`;
 
+    // Map Sprinkl chain name to OxaPay v1 network identifier
+    const oxaNetwork = CHAIN_TO_OXAPAY_NETWORK[params.chain] || params.chain;
+
     try {
-      // 1. Attempt White-Label request (direct address & QR generation)
-      const res = await axios.post(`${this.baseUrl}/merchants/request/whitelabel`, {
-        merchant: merchantKey,
-        amount: params.amountUsdt,
-        currency: 'USDT',
-        feeCurrency: 'USDT',      // auto-select USDT on OxaPay checkout
-        network: params.chain, // TRC20 or BEP20
-        orderId,
-        callbackUrl,
-        email: params.email,
-        description: `Sprinkl USDT Deposit for ${params.userId}`,
-      });
-
-      if (res.data && res.data.result === 100) {
-        return {
-          trackId: res.data.trackId,
-          payAddress: res.data.payAddress || res.data.address,
-          qrCode: res.data.qrCode,
-          payLink: res.data.payLink,
-          amount: res.data.amount || params.amountUsdt,
+      // Use OxaPay v1 White-Label endpoint — returns a direct pay address + QR code
+      // with the network pre-selected, no redirect needed.
+      const res = await axios.post(
+        `${this.baseUrl}/v1/payment/white-label`,
+        {
+          amount: params.amountUsdt,
+          pay_currency: 'USDT',
           currency: 'USDT',
-          network: params.chain,
-          expiredAt: res.data.expiredAt,
-        };
-      }
-
-      // 2. Fallback to standard merchant invoice if whitelabel not enabled
-      console.warn(
-        '[OxaPay] Whitelabel returned non-100 code, falling back to standard invoice:',
-        res.data?.message
+          network: oxaNetwork,
+          lifetime: 60,
+          order_id: orderId,
+          callback_url: callbackUrl,
+          return_url: `${domain}/dashboard`,
+          email: params.email || '',
+          description: `Sprinkl USDT Deposit for ${params.userId}`,
+        },
+        {
+          headers: {
+            merchant_api_key: merchantKey,
+            'Content-Type': 'application/json',
+          },
+        }
       );
 
-      const standardRes = await axios.post(`${this.baseUrl}/merchants/request`, {
-        merchant: merchantKey,
-        amount: params.amountUsdt,
-        currency: 'USDT',
-        feeCurrency: 'USDT',      // auto-select USDT on OxaPay checkout
-        network: params.chain,
-        orderId,
-        callbackUrl,
-        returnUrl: `${domain}/dashboard`,
-        email: params.email,
-        description: `Sprinkl USDT Deposit for ${params.userId}`,
-      });
-
-      if (standardRes.data && standardRes.data.result === 100) {
+      if (res.data?.status === 200 && res.data?.data?.track_id) {
+        const d = res.data.data;
         return {
-          trackId: standardRes.data.trackId,
-          payAddress: standardRes.data.payAddress || '',
-          payLink: standardRes.data.payLink,
-          amount: standardRes.data.amount || params.amountUsdt,
+          trackId: String(d.track_id),
+          payAddress: d.address || '',
+          qrCode: d.qr_code,
+          amount: d.pay_amount || d.amount || params.amountUsdt,
           currency: 'USDT',
-          network: params.chain,
-          expiredAt: standardRes.data.expiredAt,
+          network: params.chain, // Return original Sprinkl chain name (TRC20/BEP20)
+          expiredAt: d.expired_at,
         };
       }
 
-      throw new Error(standardRes.data?.message || 'Failed to create OxaPay invoice');
+      throw new Error(
+        res.data?.message || `OxaPay white-label returned unexpected status: ${res.data?.status}`
+      );
     } catch (err: any) {
-      const msg = err.response?.data?.message || err.message || 'OxaPay API request failed';
-      console.error('[OxaPay Error]:', msg);
+      const msg =
+        err.response?.data?.message ||
+        err.response?.data?.error ||
+        err.message ||
+        'OxaPay API request failed';
+      console.error('[OxaPay Error]:', msg, err.response?.data);
       throw new Error(`OxaPay error: ${msg}`);
     }
   }
 
   /**
-   * Verify an OxaPay payment status manually if needed.
+   * Verify an OxaPay payment status using the legacy inquiry endpoint.
+   * Works for both legacy invoice track IDs and v1 white-label track IDs.
    */
   static async checkPaymentStatus(trackId: number | string) {
     const merchantKey = this.getMerchantKey();
