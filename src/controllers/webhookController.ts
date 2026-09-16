@@ -307,40 +307,62 @@ export const handleOxaPayWebhook = async (req: Request, res: Response, next: Nex
       }
 
       const providerRef = String(trackId || txID || orderId);
+      const amountUsdtUnits = Math.round(Number(amount) * 1000000);
+
       const existingTx = await Transaction.findOne({
         provider: 'oxapay',
         providerReference: providerRef,
       });
 
       if (existingTx) {
-        console.log('[OxaPay Webhook] Deposit already credited for trackId/ref:', providerRef);
-        return res.status(200).send('Already processed');
+        // If already credited (status = success), skip
+        if (existingTx.status === 'success') {
+          console.log('[OxaPay Webhook] Deposit already credited for trackId/ref:', providerRef);
+          return res.status(200).send('Already processed');
+        }
+
+        // Found a pending TX (created when invoice was opened) — update it and credit wallet
+        existingTx.status = 'success';
+        existingTx.amount = amountUsdtUnits;
+        existingTx.rawPayload = payload;
+        await existingTx.save();
+
+        await LedgerService.creditWallet({
+          userId: user._id,
+          currency: 'USDT',
+          amount: amountUsdtUnits,
+          referenceType: 'CryptoDeposit',
+          referenceId: existingTx._id,
+        });
+
+        console.log(
+          `[OxaPay Webhook] Credited pending TX $${amount} USDT to user ${user.email} (${network})`
+        );
+      } else {
+        // No pre-existing TX — create and credit directly
+        const tx = await Transaction.create({
+          user: user._id,
+          provider: 'oxapay',
+          providerReference: providerRef,
+          direction: 'inbound',
+          currency: 'USDT',
+          amount: amountUsdtUnits,
+          status: 'success',
+          rawPayload: payload,
+        });
+
+        await LedgerService.creditWallet({
+          userId: user._id,
+          currency: 'USDT',
+          amount: amountUsdtUnits,
+          referenceType: 'CryptoDeposit',
+          referenceId: tx._id,
+        });
+
+        console.log(
+          `[OxaPay Webhook] Successfully credited $${amount} USDT to user ${user.email} (${network})`
+        );
       }
-
-      const amountUsdtUnits = Math.round(Number(amount) * 1000000);
-
-      const tx = await Transaction.create({
-        user: user._id,
-        provider: 'oxapay',
-        providerReference: providerRef,
-        direction: 'inbound',
-        currency: 'USDT',
-        amount: amountUsdtUnits,
-        status: 'success',
-        rawPayload: payload,
-      });
-
-      await LedgerService.creditWallet({
-        userId: user._id,
-        currency: 'USDT',
-        amount: amountUsdtUnits,
-        referenceType: 'CryptoDeposit',
-        referenceId: tx._id,
-      });
-
-      console.log(
-        `[OxaPay Webhook] Successfully credited $${amount} USDT to user ${user.email} (${network})`
-      );
     }
 
     return res.status(200).send('OK');

@@ -447,25 +447,54 @@ export const checkOxaPayDepositStatus = async (req: AuthRequest, res: Response, 
       }
 
       const providerRef = String(trackId || inquiry.txID || inquiry.orderId);
+      const amountUsdtUnits = Math.round(amount * 1000000);
+
+      // Check if a transaction record already exists for this trackId
       const existingTx = await Transaction.findOne({
         provider: 'oxapay',
         providerReference: providerRef,
       });
 
       if (existingTx) {
-        const wallet = await LedgerService.getOrCreateWallet(user._id, 'USDT');
+        // If it's already successfully credited, just return the current balance
+        if (existingTx.status === 'success') {
+          const wallet = await LedgerService.getOrCreateWallet(user._id, 'USDT');
+          return res.json({
+            status: 'Paid',
+            credited: true,
+            alreadyCredited: true,
+            amount,
+            availableBalance: wallet.available,
+            message: `Your USDT deposit of $${amount} has already been credited!`,
+          });
+        }
+
+        // It was a pending TX (created when invoice was opened) — now mark it success and credit wallet
+        existingTx.status = 'success';
+        existingTx.amount = amountUsdtUnits;
+        existingTx.rawPayload = inquiry;
+        await existingTx.save();
+
+        await LedgerService.creditWallet({
+          userId: user._id,
+          currency: 'USDT',
+          amount: amountUsdtUnits,
+          referenceType: 'CryptoDeposit',
+          referenceId: existingTx._id,
+        });
+
+        const updatedWallet = await LedgerService.getOrCreateWallet(user._id, 'USDT');
         return res.json({
           status: 'Paid',
           credited: true,
-          alreadyCredited: true,
+          alreadyCredited: false,
           amount,
-          availableBalance: wallet.available,
-          message: `Your USDT deposit of $${amount} has already been credited!`,
+          availableBalance: updatedWallet.available,
+          message: `Successfully verified and credited $${amount} USDT to your wallet!`,
         });
       }
 
-      const amountUsdtUnits = Math.round(amount * 1000000);
-
+      // No existing TX record at all — create one and credit (fallback for old invoices)
       const tx = await Transaction.create({
         user: user._id,
         provider: 'oxapay',

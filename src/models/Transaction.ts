@@ -1,6 +1,6 @@
 import { Schema, model, Document, Types } from 'mongoose';
 
-export type TransactionProvider = 'flutterwave' | 'paystack' | 'tron' | 'bsc';
+export type TransactionProvider = 'flutterwave' | 'paystack' | 'tron' | 'bsc' | 'oxapay';
 export type TransactionStatus = 'pending' | 'success' | 'failed' | 'reversed';
 
 export interface ITransaction extends Document {
@@ -25,7 +25,7 @@ const transactionSchema = new Schema<ITransaction>(
 
     provider: {
       type: String,
-      enum: ['flutterwave', 'paystack', 'tron', 'bsc'],
+      enum: ['flutterwave', 'paystack', 'tron', 'bsc', 'oxapay'],
       required: true,
     },
     providerReference: { type: String, required: true, index: true },
