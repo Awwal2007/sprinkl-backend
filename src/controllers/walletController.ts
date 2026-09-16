@@ -130,6 +130,23 @@ export const initializeFlutterwaveDeposit = async (req: AuthRequest, res: Respon
     );
 
     if (flwRes.data && flwRes.data.status === 'success') {
+      // Record pending transaction in DB so background sync can verify it anytime
+      const amountKobo = Math.round(amount * 100);
+      await Transaction.findOneAndUpdate(
+        { provider: 'flutterwave', providerReference: txRef },
+        {
+          user: user._id,
+          provider: 'flutterwave',
+          providerReference: txRef,
+          direction: 'inbound',
+          currency: 'NGN',
+          amount: amountKobo,
+          status: 'pending',
+          rawPayload: flwRes.data,
+        },
+        { upsert: true, new: true }
+      );
+
       return res.json({
         paymentLink: flwRes.data.data.link,
       });
@@ -240,6 +257,25 @@ export const createOxaPayDepositInvoice = async (req: AuthRequest, res: Response
       chain,
       email: user.email,
     });
+
+    // Track pending transaction in DB so background sync can check it anytime
+    if (invoice?.trackId) {
+      const amountUsdtUnits = Math.round(Number(amountUsdt) * 1000000);
+      await Transaction.findOneAndUpdate(
+        { provider: 'oxapay', providerReference: String(invoice.trackId) },
+        {
+          user: user._id,
+          provider: 'oxapay',
+          providerReference: String(invoice.trackId),
+          direction: 'inbound',
+          currency: 'USDT',
+          amount: amountUsdtUnits,
+          status: 'pending',
+          rawPayload: invoice,
+        },
+        { upsert: true, new: true }
+      );
+    }
 
     return res.json({
       invoice,
@@ -560,6 +596,232 @@ export const verifyFlutterwavePayment = async (req: AuthRequest, res: Response, 
     console.error('[FLW Verify Error]:', err.response?.data || err.message);
     return res.status(400).json({
       error: err.response?.data?.message || err.message || 'Failed to verify transaction with Flutterwave.',
+    });
+  }
+};
+
+export const syncPendingDeposits = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const user = req.user!;
+    const flwSecret = process.env.FLUTTERWAVE_SECRET_KEY;
+    const axios = (await import('axios')).default;
+
+    // Find pending inbound transactions for this user
+    const pendingTxs = await Transaction.find({
+      user: user._id,
+      direction: 'inbound',
+      status: 'pending',
+    }).sort({ createdAt: -1 }).limit(10);
+
+    const creditedResults: string[] = [];
+
+    for (const tx of pendingTxs) {
+      try {
+        if (tx.provider === 'oxapay' && tx.providerReference) {
+          const inquiry = await oxapayService.checkPaymentStatus(tx.providerReference);
+          const status = (inquiry?.status || '').toString().toLowerCase();
+          const isPaid = status === 'paid' || status === 'complete' || status === 'completed' || status === 'success';
+
+          if (isPaid) {
+            const amount = Number(inquiry.payAmount || inquiry.amount || (tx.amount / 1000000));
+            const amountUsdtUnits = Math.round(amount * 1000000);
+
+            tx.status = 'success';
+            tx.amount = amountUsdtUnits;
+            tx.rawPayload = inquiry;
+            await tx.save();
+
+            await LedgerService.creditWallet({
+              userId: user._id,
+              currency: 'USDT',
+              amount: amountUsdtUnits,
+              referenceType: 'CryptoDeposit',
+              referenceId: tx._id,
+            });
+
+            creditedResults.push(`$${amount} USDT`);
+          }
+        } else if (tx.provider === 'flutterwave' && tx.providerReference && flwSecret) {
+          let flwData: any = null;
+          try {
+            const resp = await axios.get(
+              `https://api.flutterwave.com/v3/transactions/verify_by_reference?tx_ref=${encodeURIComponent(tx.providerReference)}`,
+              {
+                headers: { Authorization: `Bearer ${flwSecret}` },
+                timeout: 7000,
+              }
+            );
+            flwData = resp.data?.data;
+          } catch {}
+
+          if (flwData && flwData.status === 'successful') {
+            const amountKobo = Math.round(flwData.amount * 100);
+            tx.status = 'success';
+            tx.amount = amountKobo;
+            tx.rawPayload = flwData;
+            await tx.save();
+
+            await LedgerService.creditWallet({
+              userId: user._id,
+              currency: 'NGN',
+              amount: amountKobo,
+              referenceType: 'FlutterwaveTransaction',
+              referenceId: tx._id,
+            });
+
+            creditedResults.push(`₦${Number(flwData.amount).toLocaleString()}`);
+          }
+        }
+      } catch (err: any) {
+        console.error(`[Sync Pending Error for tx ${tx._id}]:`, err.message);
+      }
+    }
+
+    const ngnWallet = await LedgerService.getOrCreateWallet(user._id, 'NGN');
+    const usdtWallet = await LedgerService.getOrCreateWallet(user._id, 'USDT');
+
+    return res.json({
+      success: true,
+      creditedCount: creditedResults.length,
+      creditedItems: creditedResults,
+      balances: {
+        NGN: ngnWallet,
+        USDT: usdtWallet,
+      },
+      message:
+        creditedResults.length > 0
+          ? `Successfully synchronized and credited: ${creditedResults.join(', ')}!`
+          : 'Balances are up to date.',
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const manualResolveDeposit = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { reference } = req.body;
+    if (!reference || typeof reference !== 'string') {
+      return res.status(400).json({ error: 'Please enter a valid Transaction Hash, Track ID, or Reference.' });
+    }
+
+    const cleanRef = reference.trim();
+    const user = req.user!;
+    const flwSecret = process.env.FLUTTERWAVE_SECRET_KEY;
+    const axios = (await import('axios')).default;
+
+    // Check if already processed
+    const alreadyDone = await Transaction.findOne({
+      providerReference: cleanRef,
+      status: 'success',
+    });
+
+    if (alreadyDone) {
+      return res.json({
+        success: true,
+        alreadyCredited: true,
+        message: 'This deposit has already been verified and credited to your wallet balance!',
+      });
+    }
+
+    // 1. Try OxaPay Inquiry (if numeric trackId or orderId)
+    try {
+      const oxaRes = await oxapayService.checkPaymentStatus(cleanRef);
+      if (oxaRes && oxaRes.result === 100) {
+        const status = (oxaRes.status || '').toString().toLowerCase();
+        const isPaid = status === 'paid' || status === 'complete' || status === 'completed' || status === 'success';
+
+        if (isPaid) {
+          const amount = Number(oxaRes.payAmount || oxaRes.amount || 0);
+          const amountUsdtUnits = Math.round(amount * 1000000);
+
+          const tx = await Transaction.create({
+            user: user._id,
+            provider: 'oxapay',
+            providerReference: cleanRef,
+            direction: 'inbound',
+            currency: 'USDT',
+            amount: amountUsdtUnits,
+            status: 'success',
+            rawPayload: oxaRes,
+          });
+
+          await LedgerService.creditWallet({
+            userId: user._id,
+            currency: 'USDT',
+            amount: amountUsdtUnits,
+            referenceType: 'CryptoDeposit',
+            referenceId: tx._id,
+          });
+
+          return res.json({
+            success: true,
+            currency: 'USDT',
+            amount,
+            message: `OxaPay deposit verified! $${amount} USDT credited to your wallet.`,
+          });
+        }
+      }
+    } catch (e) {}
+
+    // 2. Try Flutterwave by ID or tx_ref
+    if (flwSecret) {
+      try {
+        let flwData: any = null;
+        if (/^\d+$/.test(cleanRef)) {
+          const resp = await axios.get(`https://api.flutterwave.com/v3/transactions/${cleanRef}/verify`, {
+            headers: { Authorization: `Bearer ${flwSecret}` },
+            timeout: 7000,
+          });
+          flwData = resp.data?.data;
+        } else {
+          const resp = await axios.get(
+            `https://api.flutterwave.com/v3/transactions/verify_by_reference?tx_ref=${encodeURIComponent(cleanRef)}`,
+            {
+              headers: { Authorization: `Bearer ${flwSecret}` },
+              timeout: 7000,
+            }
+          );
+          flwData = resp.data?.data;
+        }
+
+        if (flwData && flwData.status === 'successful') {
+          const amountKobo = Math.round(flwData.amount * 100);
+          const tx = await Transaction.create({
+            user: user._id,
+            provider: 'flutterwave',
+            providerReference: cleanRef,
+            direction: 'inbound',
+            currency: 'NGN',
+            amount: amountKobo,
+            status: 'success',
+            rawPayload: flwData,
+          });
+
+          await LedgerService.creditWallet({
+            userId: user._id,
+            currency: 'NGN',
+            amount: amountKobo,
+            referenceType: 'FlutterwaveTransaction',
+            referenceId: tx._id,
+          });
+
+          return res.json({
+            success: true,
+            currency: 'NGN',
+            amount: flwData.amount,
+            message: `Flutterwave payment verified! ₦${Number(flwData.amount).toLocaleString()} credited to your wallet.`,
+          });
+        }
+      } catch (e) {}
+    }
+
+    return res.status(400).json({
+      error: `Could not verify deposit reference "${cleanRef}". Please verify the reference or contact support.`,
+    });
+  } catch (err: any) {
+    return res.status(400).json({
+      error: err.message || 'Deposit resolution failed.',
     });
   }
 };
