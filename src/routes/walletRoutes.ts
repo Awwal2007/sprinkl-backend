@@ -12,6 +12,8 @@ router.post('/fund/flw-initialize', walletController.initializeFlutterwaveDeposi
 router.post('/fund/ngn', walletController.simulateFundNgn as any);
 router.post('/fund/usdt/address', walletController.getUsdtDepositAddress as any);
 router.post('/fund/oxapay-invoice', walletController.createOxaPayDepositInvoice as any);
+router.post('/fund/oxapay-check-status', walletController.checkOxaPayDepositStatus as any);
+router.post('/verify-flw-payment', walletController.verifyFlutterwavePayment as any);
 router.post('/fund/usdt', walletController.simulateFundUsdt as any);
 router.post('/release-reserved', walletController.releaseReservedFundsToAvailable as any);
 

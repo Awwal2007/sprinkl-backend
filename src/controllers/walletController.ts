@@ -380,3 +380,186 @@ export const releaseReservedFundsToAvailable = async (req: AuthRequest, res: Res
     session.endSession();
   }
 };
+
+export const checkOxaPayDepositStatus = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { trackId } = req.body;
+    if (!trackId) {
+      return res.status(400).json({ error: 'Track ID is required' });
+    }
+
+    const user = req.user!;
+    const inquiry = await oxapayService.checkPaymentStatus(trackId);
+    console.log('[OxaPay Manual Inquiry Status]:', JSON.stringify(inquiry));
+
+    if (!inquiry || inquiry.result !== 100) {
+      return res.json({
+        status: inquiry?.status || 'Waiting',
+        credited: false,
+        message: inquiry?.message || 'Payment awaiting blockchain confirmation or not found yet.',
+      });
+    }
+
+    const status = (inquiry.status || '').toString();
+    const statusLower = status.toLowerCase();
+    const isPaid = statusLower === 'paid' || statusLower === 'complete' || statusLower === 'completed' || statusLower === 'success';
+
+    if (isPaid) {
+      const amount = Number(inquiry.payAmount || inquiry.amount || 0);
+      if (amount <= 0) {
+        return res.json({ status, credited: false, message: 'Invalid payment amount reported by gateway.' });
+      }
+
+      const providerRef = String(trackId || inquiry.txID || inquiry.orderId);
+      const existingTx = await Transaction.findOne({
+        provider: 'oxapay',
+        providerReference: providerRef,
+      });
+
+      if (existingTx) {
+        const wallet = await LedgerService.getOrCreateWallet(user._id, 'USDT');
+        return res.json({
+          status: 'Paid',
+          credited: true,
+          alreadyCredited: true,
+          amount,
+          availableBalance: wallet.available,
+          message: `Your USDT deposit of $${amount} has already been credited!`,
+        });
+      }
+
+      const amountUsdtUnits = Math.round(amount * 1000000);
+
+      const tx = await Transaction.create({
+        user: user._id,
+        provider: 'oxapay',
+        providerReference: providerRef,
+        direction: 'inbound',
+        currency: 'USDT',
+        amount: amountUsdtUnits,
+        status: 'success',
+        rawPayload: inquiry,
+      });
+
+      await LedgerService.creditWallet({
+        userId: user._id,
+        currency: 'USDT',
+        amount: amountUsdtUnits,
+        referenceType: 'CryptoDeposit',
+        referenceId: tx._id,
+      });
+
+      const updatedWallet = await LedgerService.getOrCreateWallet(user._id, 'USDT');
+
+      return res.json({
+        status: 'Paid',
+        credited: true,
+        alreadyCredited: false,
+        amount,
+        availableBalance: updatedWallet.available,
+        message: `Successfully verified and credited $${amount} USDT to your wallet!`,
+      });
+    }
+
+    return res.json({
+      status: inquiry.status || 'Waiting',
+      credited: false,
+      message: `Deposit status: ${inquiry.status || 'Waiting for blockchain confirmation'}.`,
+    });
+  } catch (err: any) {
+    console.error('[OxaPay Status Check Error]:', err.message);
+    return res.status(400).json({ error: err.message || 'Could not verify deposit status.' });
+  }
+};
+
+export const verifyFlutterwavePayment = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { transactionId, txRef } = req.body;
+    const user = req.user!;
+    const flwSecret = process.env.FLUTTERWAVE_SECRET_KEY;
+
+    if (!flwSecret) {
+      return res.status(500).json({ error: 'Flutterwave secret key is not configured.' });
+    }
+
+    if (!transactionId && !txRef) {
+      return res.status(400).json({ error: 'Transaction ID or tx_ref is required.' });
+    }
+
+    const axios = (await import('axios')).default;
+    let flwData: any = null;
+
+    if (transactionId) {
+      const resp = await axios.get(`https://api.flutterwave.com/v3/transactions/${transactionId}/verify`, {
+        headers: { Authorization: `Bearer ${flwSecret}` },
+      });
+      flwData = resp.data?.data;
+    } else if (txRef) {
+      const resp = await axios.get(
+        `https://api.flutterwave.com/v3/transactions/verify_by_reference?tx_ref=${encodeURIComponent(txRef)}`,
+        {
+          headers: { Authorization: `Bearer ${flwSecret}` },
+        }
+      );
+      flwData = resp.data?.data;
+    }
+
+    if (!flwData || flwData.status !== 'successful') {
+      return res.status(400).json({
+        error: 'Payment could not be verified or is not marked as successful on Flutterwave.',
+      });
+    }
+
+    const ref = flwData.tx_ref || String(transactionId);
+    const existingTx = await Transaction.findOne({
+      provider: 'flutterwave',
+      providerReference: ref,
+    });
+
+    if (existingTx) {
+      const wallet = await LedgerService.getOrCreateWallet(user._id, 'NGN');
+      return res.json({
+        success: true,
+        alreadyCredited: true,
+        amountNaira: flwData.amount,
+        availableBalance: wallet.available,
+        message: `Your deposit of ₦${Number(flwData.amount).toLocaleString()} has already been credited!`,
+      });
+    }
+
+    const amountKobo = Math.round(flwData.amount * 100);
+    const tx = await Transaction.create({
+      user: user._id,
+      provider: 'flutterwave',
+      providerReference: ref,
+      direction: 'inbound',
+      currency: 'NGN',
+      amount: amountKobo,
+      status: 'success',
+      rawPayload: flwData,
+    });
+
+    await LedgerService.creditWallet({
+      userId: user._id,
+      currency: 'NGN',
+      amount: amountKobo,
+      referenceType: 'FlutterwaveTransaction',
+      referenceId: tx._id,
+    });
+
+    const updatedWallet = await LedgerService.getOrCreateWallet(user._id, 'NGN');
+
+    return res.json({
+      success: true,
+      alreadyCredited: false,
+      amountNaira: flwData.amount,
+      availableBalance: updatedWallet.available,
+      message: `Payment confirmed! ₦${Number(flwData.amount).toLocaleString()} credited to your wallet.`,
+    });
+  } catch (err: any) {
+    console.error('[FLW Verify Error]:', err.response?.data || err.message);
+    return res.status(400).json({
+      error: err.response?.data?.message || err.message || 'Failed to verify transaction with Flutterwave.',
+    });
+  }
+};

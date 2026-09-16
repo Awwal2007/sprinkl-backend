@@ -9,10 +9,10 @@ import LedgerService from '../services/ledgerService';
 
 export const handleFlutterwaveWebhook = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const secretHash = process.env.FLUTTERWAVE_SECRET_HASH || 'sprinkl_flw_secret_2026';
+    const secretHash = process.env.FLUTTERWAVE_SECRET_HASH;
     const signature = req.headers['verif-hash'];
 
-    if (secretHash && signature !== secretHash) {
+    if (secretHash && signature && signature !== secretHash) {
       console.warn('[Flutterwave Webhook] Invalid signature received:', signature);
       return res.status(401).send('Invalid signature');
     }
@@ -20,26 +20,34 @@ export const handleFlutterwaveWebhook = async (req: Request, res: Response, next
     const payload = req.body;
 
     if (payload.event === 'charge.completed' && payload.data && payload.data.status === 'successful') {
-      const { amount, customer, tx_ref } = payload.data;
+      const { amount, customer, tx_ref, id } = payload.data;
       const email = customer?.email;
       const accountNumber = payload.data.account_number || payload.data.account?.account_number;
       const flwRef = payload.data.flw_ref;
 
-      // Find user by email or DVA account number or customer reference
+      // Find user by email, DVA account number, customer reference, or extracted ID from tx_ref
       const queryConditions: any[] = [];
       if (email) queryConditions.push({ email });
       if (accountNumber) queryConditions.push({ paystackDvaAccountNumber: accountNumber });
       if (flwRef) queryConditions.push({ paystackCustomerCode: flwRef });
 
+      if (tx_ref && typeof tx_ref === 'string' && tx_ref.startsWith('DEP_')) {
+        const parts = tx_ref.split('_');
+        if (parts[1] && parts[1].length === 24) {
+          queryConditions.push({ _id: parts[1] });
+        }
+      }
+
       const user = queryConditions.length > 0 ? await User.findOne({ $or: queryConditions }) : null;
       if (user) {
-        const existingTx = await Transaction.findOne({ provider: 'flutterwave', providerReference: tx_ref });
+        const ref = tx_ref || String(id);
+        const existingTx = await Transaction.findOne({ provider: 'flutterwave', providerReference: ref });
         if (!existingTx) {
           const amountKobo = Math.round(amount * 100);
           const tx = await Transaction.create({
             user: user._id,
             provider: 'flutterwave',
-            providerReference: tx_ref,
+            providerReference: ref,
             direction: 'inbound',
             currency: 'NGN',
             amount: amountKobo,
@@ -54,7 +62,11 @@ export const handleFlutterwaveWebhook = async (req: Request, res: Response, next
             referenceType: 'FlutterwaveTransaction',
             referenceId: tx._id,
           });
+
+          console.log(`[Flutterwave Webhook] Credited ₦${amount} to user ${user.email} (ref: ${ref})`);
         }
+      } else {
+        console.warn('[Flutterwave Webhook] User not identified for deposit:', payload.data);
       }
     }
 
@@ -259,19 +271,38 @@ export const handleCryptoDepositWebhook = async (req: Request, res: Response, ne
 
 export const handleOxaPayWebhook = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const payload = req.body;
+    const payload = req.body || {};
     console.log('[OxaPay Webhook Received]:', JSON.stringify(payload));
 
-    const { trackId, status, amount, orderId, txID, network } = payload;
+    const trackId = payload.trackId || payload.track_id || payload.trackID;
+    const status = (payload.status || '').toString();
+    const amount = payload.amount || payload.payAmount || payload.pay_amount || payload.value;
+    const orderId = payload.orderId || payload.order_id || payload.orderID;
+    const txID = payload.txID || payload.txId || payload.txid || payload.tx_id;
+    const network = payload.network || payload.chain || 'TRC20';
 
-    if (status === 'Paid' && orderId && amount) {
-      // orderId format: USDT_DEP_{userId}_{timestamp}
-      const parts = orderId.split('_');
-      const userId = parts[2];
+    const statusLower = status.toLowerCase();
+    const isPaid = statusLower === 'paid' || statusLower === 'complete' || statusLower === 'completed' || statusLower === 'success';
 
-      const user = userId ? await User.findById(userId) : null;
+    if (isPaid && (orderId || trackId || payload.email) && amount) {
+      let user: any = null;
+
+      // 1. Try orderId: USDT_DEP_{userId}_{timestamp}
+      if (orderId && typeof orderId === 'string') {
+        const parts = orderId.split('_');
+        const extractedUserId = parts[2] || parts[1];
+        if (extractedUserId && extractedUserId.length === 24) {
+          user = await User.findById(extractedUserId);
+        }
+      }
+
+      // 2. Try email
+      if (!user && payload.email) {
+        user = await User.findOne({ email: payload.email });
+      }
+
       if (!user) {
-        console.warn('[OxaPay Webhook] User not found for orderId:', orderId);
+        console.warn('[OxaPay Webhook] User not found for orderId:', orderId, 'email:', payload.email);
         return res.status(200).send('User not found');
       }
 
@@ -282,7 +313,7 @@ export const handleOxaPayWebhook = async (req: Request, res: Response, next: Nex
       });
 
       if (existingTx) {
-        console.log('[OxaPay Webhook] Deposit already credited for trackId:', trackId);
+        console.log('[OxaPay Webhook] Deposit already credited for trackId/ref:', providerRef);
         return res.status(200).send('Already processed');
       }
 
