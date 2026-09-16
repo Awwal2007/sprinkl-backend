@@ -117,54 +117,74 @@ export class CryptoService {
 
   // ─── BEP20 HELPERS ──────────────────────────────────────────────────
   private static getBscWallet(): ethers.Wallet {
-    const privateKey = process.env.BSC_HOT_WALLET_PRIVATE_KEY;
-    if (!privateKey || privateKey === 'YOUR_BSC_PRIVATE_KEY_HERE') {
+    const rawKey = (process.env.BSC_HOT_WALLET_PRIVATE_KEY || '').trim();
+    if (!rawKey || rawKey === 'YOUR_BSC_PRIVATE_KEY_HERE') {
       throw new Error(
-        'BSC_HOT_WALLET_PRIVATE_KEY is not configured in .env. Set the private key of your BSC hot wallet to enable BEP20 payouts.'
+        'BSC_HOT_WALLET_PRIVATE_KEY is not configured in .env. Set the 64-character hex private key of your BSC hot wallet to enable BEP20 payouts.'
+      );
+    }
+
+    const formattedKey = rawKey.startsWith('0x') ? rawKey : `0x${rawKey}`;
+
+    // A valid EVM private key must be exactly 32 bytes (64 hexadecimal characters + '0x' prefix)
+    if (!/^0x[0-9a-fA-F]{64}$/.test(formattedKey)) {
+      const hexChars = rawKey.replace(/^0x/, '');
+      throw new Error(
+        `BSC_HOT_WALLET_PRIVATE_KEY is invalid (${hexChars.length} hex characters). An EVM private key must be exactly 64 hexadecimal characters (32 bytes). Please export the 64-character private key from your wallet (e.g. MetaMask / Trust Wallet) and set BSC_HOT_WALLET_PRIVATE_KEY in .env.`
       );
     }
 
     const provider = new ethers.JsonRpcProvider(BSC_RPC_URL);
-    const wallet = new ethers.Wallet(
-      privateKey.startsWith('0x') ? privateKey : `0x${privateKey}`,
-      provider
-    );
+    const wallet = new ethers.Wallet(formattedKey, provider);
     return wallet;
   }
 
   private static async sendBep20Usdt(toAddress: string, amountSmallestUnit: number) {
     const wallet = this.getBscWallet();
-    const rawAmount = BigInt(Math.floor(amountSmallestUnit));
 
-    if (rawAmount <= 0n) {
-      throw new Error(`Invalid USDT amount to send: ${rawAmount}`);
+    // Sprinkl stores USDT in 6 decimals (1 USDT = 1,000,000 micro-units).
+    // USDT on BSC (BEP20) uses 18 decimals (1 USDT = 10^18 units).
+    // Multiply by 10^12 (10^(18 - 6)) to scale to BEP20 contract units.
+    const microUnits = BigInt(Math.floor(amountSmallestUnit));
+    if (microUnits <= 0n) {
+      throw new Error(`Invalid USDT amount to send: ${amountSmallestUnit}`);
     }
+    const rawAmount = microUnits * (10n ** 12n);
 
     try {
+      // 1. Check BNB balance to ensure the hot wallet has gas to execute the transaction
+      const bnbBalance = await wallet.provider!.getBalance(wallet.address);
+      const minBnbGas = ethers.parseEther('0.0003'); // ~0.0003 BNB is sufficient for standard BEP20 transfer
+      if (bnbBalance < minBnbGas) {
+        throw new Error(
+          `BSC hot wallet (${wallet.address}) has insufficient BNB for transaction gas fees. Balance: ${ethers.formatEther(bnbBalance)} BNB. Please fund the wallet with at least 0.002 BNB.`
+        );
+      }
+
       const contract = new ethers.Contract(USDT_BEP20_CONTRACT, ERC20_ABI, wallet);
 
-      // Check hot wallet USDT balance first
+      // 2. Check hot wallet USDT balance
       const balance: bigint = await contract.balanceOf(wallet.address);
       if (balance < rawAmount) {
         const balanceReadable = ethers.formatUnits(balance, 18);
         const neededReadable = ethers.formatUnits(rawAmount, 18);
         throw new Error(
-          `BSC hot wallet has insufficient USDT balance. Has: ${balanceReadable} USDT, needs: ${neededReadable} USDT. Fund ${wallet.address} on BSC.`
+          `BSC hot wallet (${wallet.address}) has insufficient USDT balance. Available: ${balanceReadable} USDT, Required: ${neededReadable} USDT. Please fund the wallet with BEP20 USDT.`
         );
       }
 
-      // Estimate gas then send
+      // 3. Send transaction
       const tx = await contract.transfer(toAddress, rawAmount, {
         gasLimit: 100_000n,
       });
 
-      console.log(`[CryptoService] BEP20 USDT sent. TxHash: ${tx.hash}, amount: ${rawAmount}, to: ${toAddress}`);
+      console.log(`[CryptoService] BEP20 USDT sent. TxHash: ${tx.hash}, amount: ${rawAmount} (microUnits: ${microUnits}), to: ${toAddress}`);
 
       return {
         success: true,
         txHash: tx.hash as string,
         chain: 'BEP20' as const,
-        amount: Number(rawAmount),
+        amount: Number(microUnits), // Keep consistent with TRC20 (Sprinkl 6-decimal micro-units)
         destination: toAddress,
         explorerUrl: `https://bscscan.com/tx/${tx.hash}`,
       };
