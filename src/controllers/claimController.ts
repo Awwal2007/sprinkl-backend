@@ -67,6 +67,7 @@ export const getPublicGiveaway = async (req: Request, res: Response, next: NextF
         description: giveaway.description,
         coverImageUrl: giveaway.coverImageUrl,
         currency: giveaway.currency,
+        chain: giveaway.chain || (giveaway.currency === 'USDT' ? 'TRC20' : null),
         amountPerRecipient: giveaway.amountPerRecipient,
         totalSlots: giveaway.totalSlots,
         slotsClaimed: giveaway.slotsClaimed,
@@ -173,13 +174,20 @@ export const submitClaim = async (req: Request, res: Response, next: NextFunctio
         normalized: normalizedDestination,
       };
     } else if (giveaway.currency === 'USDT') {
-      const chain = data.chain || 'TRC20';
+      // The blockchain network is determined by the giveaway settings, not claimant choice
+      const chain = (giveaway.chain as 'TRC20' | 'BEP20') || 'TRC20';
       if (!data.walletAddress) {
         return res.status(400).json({ error: 'USDT wallet address is required' });
       }
 
       if (!cryptoService.validateAddress(data.walletAddress, chain)) {
-        return res.status(400).json({ error: `Invalid ${chain} USDT wallet address format` });
+        return res.status(400).json({
+          error: `This giveaway pays out on ${chain}. The provided address is not a valid ${chain} USDT address. ${
+            chain === 'BEP20'
+              ? 'Address must be a 42-character Binance Smart Chain address starting with "0x".'
+              : 'Address must be a 34-character TRON address starting with "T".'
+          }`,
+        });
       }
 
       normalizedDestination = cryptoService.normalizeAddress(data.walletAddress, chain);

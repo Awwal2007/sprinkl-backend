@@ -56,11 +56,12 @@ export class PayoutWorker {
         payoutRef = res.reference;
         rawResponse = res;
       } else if (claim.currency === 'USDT') {
-        providerName = claim.destination.chain === 'BEP20' ? 'bsc' : 'tron';
+        const chain = (claim.destination?.chain || giveaway.chain || 'TRC20') as 'TRC20' | 'BEP20';
+        providerName = chain === 'BEP20' ? 'bsc' : 'tron';
         const res = await cryptoService.sendUsdtPayout({
-          destinationAddress: claim.destination.walletAddress || '',
+          destinationAddress: claim.destination?.walletAddress || '',
           amountUsdtInteger: claim.amount,
-          chain: claim.destination.chain || 'TRC20',
+          chain,
           reference: claim.idempotencyKey,
         });
 

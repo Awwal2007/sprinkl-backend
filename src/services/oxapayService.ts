@@ -124,6 +124,60 @@ export class OxaPayService {
   }
 
   /**
+   * Robust error message extraction for OxaPay API responses.
+   * OxaPay v1 returns HTTP 400 with a generic message and specific details
+   * inside error: { type, key, message } or error: { [field]: 'reason' }.
+   */
+  private static extractErrorMessage(err: any): string {
+    const data = err.response?.data;
+    if (!data) return err.message || 'OxaPay API request failed';
+
+    // 1. OxaPay specific error object
+    if (data.error) {
+      if (typeof data.error === 'string' && data.error.trim()) {
+        return data.error;
+      }
+      if (typeof data.error === 'object') {
+        // Standard OxaPay error schema: { type, key, message }
+        if (data.error.message) {
+          return data.error.key ? `${data.error.key}: ${data.error.message}` : data.error.message;
+        }
+        // Map of fields: { [field]: string | string[] }
+        const entries = Object.entries(data.error);
+        if (entries.length > 0) {
+          return entries
+            .map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') : (typeof v === 'object' && v ? JSON.stringify(v) : v)}`)
+            .join(' | ');
+        }
+      }
+    }
+
+    // 2. Validation errors array/map
+    if (data.errors && typeof data.errors === 'object') {
+      const entries = Object.entries(data.errors);
+      if (entries.length > 0) {
+        return entries
+          .map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') : v}`)
+          .join(' | ');
+      }
+    }
+
+    // 3. Informative custom message (if not the generic boilerplate)
+    const genericMsg = 'There was an issue with the submitted data. Please verify your input and try again.';
+    if (data.message && data.message !== genericMsg) {
+      return data.message;
+    }
+
+    // 4. Fallback with payload representation
+    if (data.message) {
+      const detail = data.error && Object.keys(data.error).length > 0 ? JSON.stringify(data.error) : JSON.stringify(data);
+      return `${data.message} Detail: ${detail}`;
+    }
+
+    return JSON.stringify(data);
+  }
+
+  /**
    * Send a crypto payout using OxaPay v1 Payout API.
    * Disburses USDT directly from the merchant's OxaPay balance without
    * requiring on-chain private keys or gas funds.
@@ -142,14 +196,20 @@ export class OxaPayService {
     }
 
     const network = CHAIN_TO_OXAPAY_NETWORK[params.chain] || params.chain;
+    const cleanAmount = Number(params.amountUsdt.toFixed(6));
+    const cleanAddress = params.address.trim();
+
+    console.log(
+      `[OxaPay Payout] Sending ${cleanAmount} USDT to ${cleanAddress} on network "${network}" (${params.chain})`
+    );
 
     try {
       const res = await axios.post(
         `${this.baseUrl}/v1/payout`,
         {
-          address: params.address,
+          address: cleanAddress,
           currency: 'USDT',
-          amount: params.amountUsdt,
+          amount: cleanAmount,
           network,
           description: params.description || 'Sprinkl Giveaway Payout',
         },
@@ -170,6 +230,8 @@ export class OxaPayService {
             ? `https://tronscan.org/#/transaction/${txHash}`
             : `https://bscscan.com/tx/${txHash}`;
 
+        console.log(`[OxaPay Payout Success] TrackId: ${trackId}, Tx: ${txHash}`);
+
         return {
           trackId,
           txHash,
@@ -178,17 +240,22 @@ export class OxaPayService {
         };
       }
 
-      throw new Error(
-        res.data?.message || `OxaPay payout returned status: ${res.data?.status}`
-      );
+      const extractedMsg = this.extractErrorMessage({ response: res });
+      throw new Error(extractedMsg || `OxaPay payout returned status: ${res.data?.status}`);
     } catch (err: any) {
-      const msg =
-        err.response?.data?.message ||
-        err.response?.data?.error ||
-        err.message ||
-        'OxaPay payout API failed';
-      console.error('[OxaPay Payout Error]:', msg, err.response?.data);
-      throw new Error(`OxaPay payout failed: ${msg}`);
+      const detailedMsg = this.extractErrorMessage(err);
+      console.error('[OxaPay Payout Error]:', {
+        extractedError: detailedMsg,
+        httpStatus: err.response?.status,
+        responseData: err.response?.data,
+        submittedPayload: {
+          address: cleanAddress,
+          currency: 'USDT',
+          amount: cleanAmount,
+          network,
+        },
+      });
+      throw new Error(`OxaPay payout failed: ${detailedMsg}`);
     }
   }
 }
