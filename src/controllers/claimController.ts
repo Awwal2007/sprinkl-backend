@@ -191,9 +191,18 @@ export const submitClaim = async (req: Request, res: Response, next: NextFunctio
         return res.status(400).json({
           error: `This giveaway pays out on ${chain}. The provided address is not a valid ${chain} USDT address. ${
             chain === 'BEP20'
-              ? 'Address must be a 42-character Binance Smart Chain address starting with "0x".'
-              : 'Address must be a 34-character TRON address starting with "T".'
+              ? 'Address must be a valid 42-character Binance Smart Chain (BEP-20) address starting with "0x".'
+              : 'Address must be a valid 34-character TRON (TRC-20) address starting with "T".'
           }`,
+        });
+      }
+
+      // Proactively check if the address is a smart contract address (e.g. exchange deposit proxy)
+      const isContract = await cryptoService.isContractAddress(data.walletAddress, chain);
+      if (isContract) {
+        return res.status(400).json({
+          error:
+            'Exchange deposit and smart contract addresses are not supported. Payout processors will reject them. Please enter a personal self-custody wallet address (e.g. Trust Wallet or MetaMask).',
         });
       }
 

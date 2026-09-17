@@ -24,11 +24,36 @@ export class CryptoService {
     const cleanAddr = address.trim();
 
     if (chain === 'TRC20') {
-      return /^T[a-zA-Z0-9]{33}$/.test(cleanAddr);
+      try {
+        return !!(TronWeb as any).isAddress(cleanAddr);
+      } catch {
+        return /^T[a-zA-Z0-9]{33}$/.test(cleanAddr);
+      }
     } else if (chain === 'BEP20') {
-      return /^0x[a-fA-F0-9]{40}$/.test(cleanAddr);
+      try {
+        return ethers.isAddress(cleanAddr);
+      } catch {
+        return /^0x[a-fA-F0-9]{40}$/.test(cleanAddr);
+      }
     }
 
+    return false;
+  }
+
+  static async isContractAddress(address: string, chain: 'TRC20' | 'BEP20' = 'TRC20'): Promise<boolean> {
+    try {
+      const cleanAddr = address.trim();
+      if (chain === 'BEP20') {
+        const provider = new ethers.JsonRpcProvider(BSC_RPC_URL);
+        const code = await Promise.race([
+          provider.getCode(cleanAddr),
+          new Promise<string>((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000)),
+        ]);
+        return Boolean(code && code !== '0x' && code !== '0x0' && code.length > 2);
+      }
+    } catch {
+      return false;
+    }
     return false;
   }
 

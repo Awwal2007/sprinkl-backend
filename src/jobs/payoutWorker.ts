@@ -128,8 +128,19 @@ export class PayoutWorker {
     } catch (err: any) {
       console.error(`[PayoutWorker] Payout failed for Claim ${claimId}:`, err.message);
 
+      let cleanFailureReason = err.message || 'Disbursement failed';
+      const lowerErr = cleanFailureReason.toLowerCase();
+      if (
+        lowerErr.includes('invalid_address') ||
+        lowerErr.includes('contract address') ||
+        lowerErr.includes('is a contract')
+      ) {
+        cleanFailureReason =
+          'Exchange or contract address detected. Payout processors cannot send crypto to exchange deposit addresses (e.g. Binance, OKX, Bybit). Please retry using a personal self-custody wallet (e.g. Trust Wallet, MetaMask, TronLink).';
+      }
+
       claim.status = 'failed';
-      claim.failureReason = err.message;
+      claim.failureReason = cleanFailureReason;
       // Free the destination uniqueness lock so claimant can retry
       if (claim.destination && claim.destination.normalized) {
         claim.destination.normalized = `FAILED_${Date.now()}_${claim.destination.normalized}`;
