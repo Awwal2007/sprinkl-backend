@@ -96,7 +96,7 @@ function generateBotReply(text: string, hasAttachments: boolean): string {
     lower.includes('commission') ||
     lower.includes('whale')
   ) {
-    return 'Sprinkl operates with transparent, competitive pricing:\n\n• New Creator Privilege: Your first 3 giveaways enjoy our promotional 2.5% platform fee (floor: ₦250 or $0.50 USDT).\n• Standard Rate: 5.0% platform fee.\n• Whale Tier: Drops of ₦1,000,000+ ($1,000+ USDT) enjoy a discounted 3.0% fee, capped at ₦35,000 ($35 USDT max).\n\nThere are zero hidden withdrawal charges.';
+    return 'Sprinkl operates with transparent, competitive pricing:\n\n• New Creator Privilege: Your first 3 giveaways enjoy our promotional 2.5% platform fee (floor: ₦150 or $0.15 USDT).\n• Standard Rate: 5.0% platform fee (floor: ₦300 or $0.25 USDT).\n• Whale Tier: Drops of ₦1,000,000+ ($1,000+ USDT) enjoy a discounted 3.0% fee, capped at ₦35,000 ($35 USDT max).\n\nThere are zero hidden withdrawal charges.';
   }
 
   // 7. Creating / Hosting a Giveaway

@@ -72,8 +72,8 @@ export const createGiveaway = async (req: AuthRequest, res: Response, next: Next
     }
 
     // B. Platform Fee & Whale Tier Logic
-    // - New Creator Privilege: First 3 giveaways charged only 2.5% (floor: ₦150 / $0.50 USDT)
-    // - Standard: 5.0% (floor: ₦300 / $1.00 USDT)
+    // - New Creator Privilege: First 3 giveaways charged only 2.5% (floor: ₦150 / $0.15 USDT)
+    // - Standard: 5.0% (floor: ₦300 / $0.25 USDT)
     // - Whale Tier: >= ₦1,000,000 ($1,000 USDT) drops fee to 3.0%, capped at ₦35,000 ($35 USDT max)
     const pastGiveawaysCount = await Giveaway.countDocuments({
       host: userId,
@@ -95,7 +95,7 @@ export const createGiveaway = async (req: AuthRequest, res: Response, next: Next
         maxFee = 3500000; // Capped at ₦35,000 max
       }
     } else {
-      minFee = isPromo ? 500000 : 1000000; // $0.50 or $1.00 USDT floor
+      minFee = isPromo ? 150000 : 250000; // $0.15 promo floor, $0.25 standard floor (0.25 USDT)
       if (giftPoolSmallest >= 1000000000) { // >= $1,000 USDT
         isWhaleTier = true;
         feeRate = 0.03;
