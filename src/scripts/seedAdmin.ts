@@ -22,9 +22,12 @@ async function seedAdmin() {
     await user.save();
     console.log(`🌟 Success! User "${user.fullName}" is confirmed as ADMIN.`);
   } else {
-    console.log(`⚠️ User "${TARGET_EMAIL}" not found. Creating default admin account...`);
+    const seedPassword = process.env.ADMIN_SEED_PASSWORD;
+    if (!seedPassword) {
+      throw new Error('ADMIN_SEED_PASSWORD environment variable is required to create the admin account.');
+    }
     const salt = await bcrypt.genSalt(10);
-    const passwordHash = await bcrypt.hash('AdminSprinkl2026!', salt);
+    const passwordHash = await bcrypt.hash(seedPassword, salt);
 
     user = await User.create({
       fullName: 'Sprinkl Administrator',
@@ -38,7 +41,7 @@ async function seedAdmin() {
       },
     });
 
-    console.log(`🎉 Created new admin user: ${user.email} (Password: AdminSprinkl2026!)`);
+    console.log(`🎉 Created new admin user: ${user.email}`);
   }
 
   // Ensure NGN & USDT wallet accounts exist for this admin

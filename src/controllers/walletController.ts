@@ -163,48 +163,8 @@ export const initializeFlutterwaveDeposit = async (req: AuthRequest, res: Respon
   }
 };
 
-export const simulateFundNgn = async (req: AuthRequest, res: Response, next: NextFunction) => {
-  try {
-    const { amountNaira } = req.body;
-    if (!amountNaira || amountNaira <= 0) {
-      return res.status(400).json({ error: 'Amount in Naira must be greater than 0' });
-    }
-    if (amountNaira < 1000) {
-      return res.status(400).json({ error: 'Minimum NGN deposit is ₦1,000.' });
-    }
-
-    const amountKobo = Math.round(amountNaira * 100);
-
-    const refId = 'FLW_DVA_' + Date.now();
-    const tx = await Transaction.create({
-      user: req.user!._id,
-      provider: 'flutterwave',
-      providerReference: refId,
-      direction: 'inbound',
-      currency: 'NGN',
-      amount: amountKobo,
-      status: 'success',
-      rawPayload: { note: 'Simulated Flutterwave DVA Bank Transfer Deposit' },
-    });
-
-    const wallet = await LedgerService.creditWallet({
-      userId: req.user!._id,
-      currency: 'NGN',
-      amount: amountKobo,
-      referenceType: 'FlutterwaveTransaction',
-      referenceId: tx._id,
-    });
-
-    return res.json({
-      message: `Successfully credited ₦${amountNaira.toLocaleString()} to NGN wallet`,
-      wallet: {
-        available: wallet.available,
-        reserved: wallet.reserved,
-      },
-    });
-  } catch (err) {
-    next(err);
-  }
+export const simulateFundNgn = async (req: AuthRequest, res: Response) => {
+  return res.status(403).json({ error: 'Simulation endpoints are strictly disabled in production.' });
 };
 
 export const getUsdtDepositAddress = async (req: AuthRequest, res: Response, next: NextFunction) => {
@@ -285,48 +245,8 @@ export const createOxaPayDepositInvoice = async (req: AuthRequest, res: Response
   }
 };
 
-export const simulateFundUsdt = async (req: AuthRequest, res: Response, next: NextFunction) => {
-  try {
-    const { amountUsdt, chain = 'TRC20' } = req.body;
-    if (!amountUsdt || amountUsdt <= 0) {
-      return res.status(400).json({ error: 'USDT amount must be greater than 0' });
-    }
-    if (amountUsdt < 2) {
-      return res.status(400).json({ error: 'Minimum USDT deposit is $2.' });
-    }
-
-    const amountUnits = Math.round(amountUsdt * 1000000);
-
-    const txHash = (chain === 'TRC20' ? 'tron_dep_' : 'bsc_dep_') + Date.now().toString(16);
-    const tx = await Transaction.create({
-      user: req.user!._id,
-      provider: chain === 'TRC20' ? 'tron' : 'bsc',
-      providerReference: txHash,
-      direction: 'inbound',
-      currency: 'USDT',
-      amount: amountUnits,
-      status: 'success',
-      rawPayload: { note: `Simulated ${chain} Crypto Deposit` },
-    });
-
-    const wallet = await LedgerService.creditWallet({
-      userId: req.user!._id,
-      currency: 'USDT',
-      amount: amountUnits,
-      referenceType: 'CryptoDeposit',
-      referenceId: tx._id,
-    });
-
-    return res.json({
-      message: `Successfully credited ${amountUsdt} USDT to USDT wallet`,
-      wallet: {
-        available: wallet.available,
-        reserved: wallet.reserved,
-      },
-    });
-  } catch (err) {
-    next(err);
-  }
+export const simulateFundUsdt = async (req: AuthRequest, res: Response) => {
+  return res.status(403).json({ error: 'Simulation endpoints are strictly disabled in production.' });
 };
 
 export const releaseReservedFundsToAvailable = async (req: AuthRequest, res: Response, next: NextFunction) => {
