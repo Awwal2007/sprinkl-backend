@@ -67,7 +67,13 @@ export const getPublicGiveaway = async (req: Request, res: Response, next: NextF
         description: giveaway.description,
         coverImageUrl: giveaway.coverImageUrl,
         currency: giveaway.currency,
-        chain: giveaway.chain || (giveaway.currency === 'USDT' ? 'TRC20' : null),
+        chain: (() => {
+          const resolvedChain = giveaway.chain || (giveaway.currency === 'USDT' ? 'TRC20' : null);
+          if (giveaway.currency === 'USDT') {
+            console.log(`[getPublicGiveaway] Giveaway ${giveaway._id} (${giveaway.slug}) USDT chain from DB: "${giveaway.chain}" → resolved: "${resolvedChain}"`);
+          }
+          return resolvedChain;
+        })(),
         amountPerRecipient: giveaway.amountPerRecipient,
         totalSlots: giveaway.totalSlots,
         slotsClaimed: giveaway.slotsClaimed,
@@ -176,6 +182,7 @@ export const submitClaim = async (req: Request, res: Response, next: NextFunctio
     } else if (giveaway.currency === 'USDT') {
       // The blockchain network is determined by the giveaway settings, not claimant choice
       const chain = (giveaway.chain as 'TRC20' | 'BEP20') || 'TRC20';
+      console.log(`[submitClaim] Giveaway ${giveaway._id} USDT chain from DB: "${giveaway.chain}" → using: "${chain}"`);
       if (!data.walletAddress) {
         return res.status(400).json({ error: 'USDT wallet address is required' });
       }
