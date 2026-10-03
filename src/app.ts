@@ -20,7 +20,8 @@ app.use(
   cors({
     origin: process.env.NODE_ENV === 'production' 
       ? ['https://sprinkl.biz', 'https://www.sprinkl.biz']
-      : ['https://sprinkl.biz', 'https://www.sprinkl.biz', 'http://localhost:5173', 'http://localhost:3000'],
+      // : ['https://sprinkl.biz', 'https://www.sprinkl.biz', 'http://localhost:5173', 'http://localhost:3000'],
+      : [''],
     credentials: true,
   })
 );
