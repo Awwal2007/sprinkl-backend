@@ -337,6 +337,106 @@ class EmailService {
       return { success: false, error: err.message };
     }
   }
+
+  /**
+   * Send high-priority security alert when a login occurs from an unknown location/device
+   */
+  async sendUnknownLocationSecurityAlertEmail(params: {
+    email: string;
+    fullName: string;
+    ip: string;
+    city: string;
+    region?: string;
+    country: string;
+    browser: string;
+    os: string;
+    device: string;
+    loginTime: Date;
+  }) {
+    const domain = process.env.DOMAIN || 'https://www.sprinkl.biz';
+    const locationString =
+      params.city && params.city !== 'Unknown City'
+        ? `${params.city}${params.region && params.region !== 'Unknown Region' ? `, ${params.region}` : ''}, ${params.country}`
+        : params.country || 'Unknown Location';
+
+    const formattedTime = params.loginTime.toUTCString();
+
+    const html = `
+      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #0b0f17; color: #f8fafc; padding: 40px 24px; border-radius: 16px; border: 1px solid #1e293b;">
+        <div style="text-align: center; margin-bottom: 28px;">
+          <h1 style="color: #10b981; font-size: 28px; font-weight: 800; margin: 0; letter-spacing: -0.5px;">Sprinkl</h1>
+          <p style="color: #ef4444; font-size: 13px; font-weight: 700; margin-top: 4px;">🚨 Utmost Security Alert</p>
+        </div>
+
+        <div style="background-color: #131b2e; padding: 28px; border-radius: 14px; border: 1px solid rgba(239, 68, 68, 0.3);">
+          <div style="text-align: center; margin-bottom: 20px;">
+            <div style="display: inline-block; background-color: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 50%; width: 56px; height: 56px; line-height: 56px; font-size: 26px;">
+              ⚠️
+            </div>
+            <h2 style="color: #ffffff; font-size: 20px; font-weight: 800; margin: 12px 0 6px 0;">New Login from Unknown Location</h2>
+            <p style="color: #94a3b8; font-size: 13px; margin: 0;">
+              Your Sprinkl host account was just accessed from an unrecognized location or device.
+            </p>
+          </div>
+
+          <div style="background-color: #0b0f17; border-radius: 12px; padding: 18px 20px; border: 1px solid #1e293b; margin: 20px 0;">
+            <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+              <tr>
+                <td style="color: #64748b; padding: 6px 0; width: 35%;">📍 Location:</td>
+                <td style="color: #f8fafc; font-weight: 700; padding: 6px 0;">${locationString}</td>
+              </tr>
+              <tr>
+                <td style="color: #64748b; padding: 6px 0;">💻 Device / Browser:</td>
+                <td style="color: #f8fafc; font-weight: 600; padding: 6px 0;">${params.browser} on ${params.os} (${params.device})</td>
+              </tr>
+              <tr>
+                <td style="color: #64748b; padding: 6px 0;">🌐 IP Address:</td>
+                <td style="color: #38bdf8; font-family: monospace; font-weight: 700; padding: 6px 0;">${params.ip}</td>
+              </tr>
+              <tr>
+                <td style="color: #64748b; padding: 6px 0;">⏰ Time (UTC):</td>
+                <td style="color: #f8fafc; font-weight: 500; padding: 6px 0;">${formattedTime}</td>
+              </tr>
+            </table>
+          </div>
+
+          <p style="color: #cbd5e1; font-size: 13px; line-height: 20px; margin-bottom: 20px;">
+            <strong>Was this you?</strong><br>
+            If you recently signed in from this location, you can safely ignore this message. We've added this location to your trusted sign-in history.
+          </p>
+
+          <p style="color: #ef4444; font-size: 13px; line-height: 20px; margin-bottom: 24px;">
+            <strong>Don't recognize this sign-in?</strong><br>
+            Someone may have accessed your account. Reset your password immediately and secure your wallet funds:
+          </p>
+
+          <div style="text-align: center; margin-bottom: 12px;">
+            <a href="${domain}/forgot-password" style="background-color: #ef4444; color: #ffffff; font-weight: 700; font-size: 14px; text-decoration: none; padding: 12px 28px; border-radius: 10px; display: inline-block; box-shadow: 0 4px 14px rgba(239, 68, 68, 0.3);">
+              Lock Account & Reset Password
+            </a>
+          </div>
+        </div>
+      </div>
+    `;
+
+    if (!this.resend) {
+      console.log(`[EmailService Dev Mock] Unknown location alert for ${params.email}: ${locationString} (${params.ip})`);
+      return { success: true, mock: true };
+    }
+
+    try {
+      const data = await this.resend.emails.send({
+        from: this.fromEmail,
+        to: params.email,
+        subject: `🚨 Security Alert: New Login from ${params.city && params.city !== 'Unknown City' ? params.city : params.country || 'Unknown Location'}`,
+        html,
+      });
+      return { success: true, data };
+    } catch (err: any) {
+      console.error('[EmailService Unknown Location Alert Error]', err);
+      return { success: false, error: err.message };
+    }
+  }
 }
 
 export default new EmailService();

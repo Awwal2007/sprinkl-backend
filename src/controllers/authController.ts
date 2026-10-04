@@ -7,6 +7,7 @@ import { AuthRequest } from '../middleware/auth';
 
 import crypto from 'crypto';
 import emailService from '../services/emailService';
+import securityService from '../services/securityService';
 
 const signupSchema = z.object({
   fullName: z.string().min(2).max(120),
@@ -286,6 +287,9 @@ export const verifyLoginOtp = async (req: Request, res: Response, next: NextFunc
     const { accessToken, refreshToken } = generateTokens(user._id);
     user.refreshTokenHash = await bcrypt.hash(refreshToken, 10);
     await user.save();
+
+    // Check login location security & notify if unknown location
+    await securityService.checkAndRecordLoginLocation(user, req);
 
     return res.json({
       message: 'Login successful',

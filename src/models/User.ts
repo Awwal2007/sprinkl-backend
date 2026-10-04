@@ -6,6 +6,19 @@ export interface ICryptoDepositAddress {
   createdAt: Date;
 }
 
+export interface IKnownLocation {
+  ip: string;
+  city?: string;
+  region?: string;
+  country?: string;
+  countryCode?: string;
+  device?: string;
+  browser?: string;
+  os?: string;
+  firstSeenAt: Date;
+  lastSeenAt: Date;
+}
+
 export interface IUser extends Document {
   _id: Types.ObjectId;
   fullName: string;
@@ -31,6 +44,7 @@ export interface IUser extends Document {
     reviewedAt?: Date;
   };
   cryptoDepositAddresses: ICryptoDepositAddress[];
+  knownLocations: IKnownLocation[];
   paystackCustomerCode?: string;
   paystackDvaAccountNumber?: string;
   paystackDvaBankName?: string;
@@ -91,6 +105,21 @@ const userSchema = new Schema<IUser>(
         chain: { type: String, enum: ['TRC20', 'BEP20'] },
         address: { type: String, trim: true },
         createdAt: { type: Date, default: Date.now },
+      },
+    ],
+
+    knownLocations: [
+      {
+        ip: { type: String, trim: true },
+        city: { type: String, trim: true },
+        region: { type: String, trim: true },
+        country: { type: String, trim: true },
+        countryCode: { type: String, trim: true },
+        device: { type: String, trim: true },
+        browser: { type: String, trim: true },
+        os: { type: String, trim: true },
+        firstSeenAt: { type: Date, default: Date.now },
+        lastSeenAt: { type: Date, default: Date.now },
       },
     ],
 
