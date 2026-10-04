@@ -6,6 +6,8 @@ import Claim from '../models/Claim';
 import Giveaway from '../models/Giveaway';
 import LedgerEntry from '../models/LedgerEntry';
 import LedgerService from '../services/ledgerService';
+import NowPaymentsService from '../services/nowpaymentsService';
+import CryptoDepositService from '../services/cryptoDepositService';
 
 export const handleFlutterwaveWebhook = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -382,6 +384,56 @@ export const handleOxaPayWebhook = async (req: Request, res: Response, next: Nex
     return res.status(200).send('OK');
   } catch (err) {
     console.error('[OxaPay Webhook Error]:', err);
+    return res.status(200).send('Error processed');
+  }
+};
+
+export const handleNowPaymentsWebhook = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const payload = req.body || {};
+    const receivedSig = req.headers['x-nowpayments-sig'];
+    console.log('[NOWPayments Webhook Received]:', JSON.stringify(payload));
+
+    const isValid = NowPaymentsService.verifyIpnSignature(payload, receivedSig);
+    if (!isValid) {
+      console.warn('[NOWPayments Webhook] Invalid IPN signature');
+      return res.status(401).send('Invalid signature');
+    }
+
+    const paymentId = String(payload.payment_id || '');
+    const status = (payload.payment_status || '').toString().toLowerCase();
+    // Gross amount: prefer actually_paid, then pay_amount, then price_amount
+    const amountGross = Number(payload.actually_paid || payload.pay_amount || payload.price_amount || 0);
+    const orderId = payload.order_id || '';
+    const currency = payload.pay_currency || 'usdt';
+
+    // Support finished, confirmed, sending, and partially_paid!
+    const isPaid =
+      status === 'finished' || status === 'confirmed' || status === 'sending' || status === 'partially_paid';
+
+    if (isPaid && amountGross > 0) {
+      const result = await CryptoDepositService.processCredit({
+        provider: 'nowpayments',
+        providerReference: paymentId,
+        amountUsdtGross: amountGross,
+        rawPayload: payload,
+        orderId,
+        network: currency,
+      });
+
+      if (!result.success) {
+        console.warn(`[NOWPayments Webhook Error]: ${result.error}`);
+      }
+    } else if (status === 'failed' || status === 'expired') {
+      await Transaction.findOneAndUpdate(
+        { provider: 'nowpayments', providerReference: paymentId, status: { $ne: 'success' } },
+        { status: 'failed', rawPayload: payload }
+      );
+    }
+
+    return res.status(200).send('OK');
+  } catch (err) {
+    console.error('[NOWPayments Webhook Error]:', err);
     return res.status(200).send('Error processed');
   }
 };

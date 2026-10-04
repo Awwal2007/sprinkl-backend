@@ -83,5 +83,15 @@ const ledgerEntrySchema = new Schema<ILedgerEntry>(
 );
 
 ledgerEntrySchema.index({ user: 1, currency: 1, createdAt: -1 });
+ledgerEntrySchema.index(
+  { referenceType: 1, referenceId: 1, type: 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      referenceType: { $in: ['CryptoDeposit', 'FlutterwaveTransaction', 'PaystackTransaction'] },
+      type: 'fund',
+    },
+  }
+);
 
 export default model<ILedgerEntry>('LedgerEntry', ledgerEntrySchema);
