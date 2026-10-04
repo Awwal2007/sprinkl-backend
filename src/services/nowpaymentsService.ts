@@ -169,6 +169,51 @@ export class NowPaymentsService {
     }
   }
 
+  private static cachedJwtToken: { token: string; expiresAt: number } | null = null;
+
+  /**
+   * Authenticate with NOWPayments to obtain a Bearer JWT token required for Payouts
+   */
+  static async getAuthToken(): Promise<string> {
+    const email = process.env.NOWPAYMENTS_EMAIL;
+    const password = process.env.NOWPAYMENTS_PASSWORD;
+
+    if (!email || !password) {
+      throw new Error(
+        'NOWPayments Payouts require NOWPAYMENTS_EMAIL and NOWPAYMENTS_PASSWORD in server/.env to authenticate for Bearer JWT token. Add your NOWPayments account login credentials to .env.'
+      );
+    }
+
+    const now = Date.now();
+    // Cache token and refresh 30s before 5-minute expiry
+    if (this.cachedJwtToken && this.cachedJwtToken.expiresAt > now + 30000) {
+      return this.cachedJwtToken.token;
+    }
+
+    try {
+      const res = await axios.post(`${this.getBaseUrl()}/auth`, {
+        email: email.trim(),
+        password: password.trim(),
+      });
+
+      const token = res.data?.token;
+      if (!token) {
+        throw new Error('NOWPayments /auth endpoint did not return a valid JWT token');
+      }
+
+      this.cachedJwtToken = {
+        token,
+        expiresAt: now + 4 * 60 * 1000, // 4 minutes
+      };
+
+      return token;
+    } catch (err: any) {
+      const msg = err.response?.data?.message || err.response?.data?.error || err.message;
+      console.error('[NOWPayments Auth Error]:', msg, err.response?.data);
+      throw new Error(`NOWPayments payout authentication failed: ${msg}`);
+    }
+  }
+
   /**
    * Send a payout / withdrawal from NOWPayments custody balance to a user address
    */
@@ -179,6 +224,7 @@ export class NowPaymentsService {
     description?: string;
   }): Promise<{ payoutId: string; txHash?: string; status: string; explorerUrl: string }> {
     const apiKey = this.getApiKey();
+    const jwtToken = await this.getAuthToken();
     const currency = CHAIN_TO_NOWPAYMENTS_TICKER[params.chain] || 'usdttrc20';
     const cleanAmount = Number(params.amountUsdt.toFixed(6));
     const cleanAddress = params.address.trim();
@@ -203,6 +249,7 @@ export class NowPaymentsService {
         {
           headers: {
             'x-api-key': apiKey,
+            'Authorization': `Bearer ${jwtToken}`,
             'Content-Type': 'application/json',
           },
         }

@@ -238,27 +238,45 @@ export class CryptoService {
       throw new Error(`Invalid ${chain} wallet address: ${destinationAddress}`);
     }
 
-    // 1. Prefer NOWPayments Payout API if configured
-    if (process.env.NOWPAYMENTS_API_KEY) {
-      const amountUsdtDecimal = amountUsdtInteger / 1_000_000;
-      console.log(
-        `[CryptoService] Routing payout via NOWPayments API: ${amountUsdtDecimal} USDT to ${destinationAddress} (${chain})`
-      );
-      const res = await NowPaymentsService.sendPayout({
-        address: destinationAddress,
-        amountUsdt: amountUsdtDecimal,
-        chain,
-        description: `Sprinkl Giveaway ${reference || ''}`.trim(),
-      });
+    // 1. Prefer NOWPayments Payout API if configured with API key + Dashboard credentials
+    if (
+      process.env.NOWPAYMENTS_API_KEY &&
+      process.env.NOWPAYMENTS_EMAIL &&
+      process.env.NOWPAYMENTS_PASSWORD
+    ) {
+      try {
+        const amountUsdtDecimal = amountUsdtInteger / 1_000_000;
+        console.log(
+          `[CryptoService] Routing payout via NOWPayments API: ${amountUsdtDecimal} USDT to ${destinationAddress} (${chain})`
+        );
+        const res = await NowPaymentsService.sendPayout({
+          address: destinationAddress,
+          amountUsdt: amountUsdtDecimal,
+          chain,
+          description: `Sprinkl Giveaway ${reference || ''}`.trim(),
+        });
 
-      return {
-        success: true,
-        txHash: res.txHash || res.payoutId,
-        chain,
-        amount: amountUsdtInteger,
-        destination: destinationAddress,
-        explorerUrl: res.explorerUrl,
-      };
+        return {
+          success: true,
+          txHash: res.txHash || res.payoutId,
+          chain,
+          amount: amountUsdtInteger,
+          destination: destinationAddress,
+          explorerUrl: res.explorerUrl,
+        };
+      } catch (npErr: any) {
+        console.warn(
+          `[CryptoService] NOWPayments payout failed: ${npErr.message}. Checking available fallback gateways...`
+        );
+        // If no other payout gateway is configured, throw the error
+        if (
+          !process.env.OXAPAY_PAYOUT_API_KEY &&
+          !process.env.TRON_HOT_WALLET_PRIVATE_KEY &&
+          !process.env.BSC_HOT_WALLET_PRIVATE_KEY
+        ) {
+          throw npErr;
+        }
+      }
     }
 
     // 2. Fallback to OxaPay Payout API if legacy key exists
