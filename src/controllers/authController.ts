@@ -42,8 +42,9 @@ export const signup = async (req: Request, res: Response, next: NextFunction) =>
     const salt = await bcrypt.genSalt(10);
     const passwordHash = await bcrypt.hash(data.password, salt);
 
-    // Generate secure 32-byte hexadecimal email verification token
+    // Generate secure 32-byte hexadecimal email verification token + 6-digit verification code
     const verificationToken = crypto.randomBytes(32).toString('hex');
+    const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
     const verificationTokenExpires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
 
     const user = new User({
@@ -54,6 +55,7 @@ export const signup = async (req: Request, res: Response, next: NextFunction) =>
       role: 'host',
       emailVerified: false,
       verificationToken,
+      verificationCode,
       verificationTokenExpires,
       kyc: {
         status: 'verified',
@@ -63,9 +65,9 @@ export const signup = async (req: Request, res: Response, next: NextFunction) =>
 
     await user.save();
 
-    // Send verification email via Resend
+    // Send verification email via Resend with copy-ready 6-digit code and direct link
     const clientOrigin = req.get('origin') || (req.headers.origin as string | undefined);
-    await emailService.sendVerificationEmail(user.email, user.fullName, verificationToken, clientOrigin);
+    await emailService.sendVerificationEmail(user.email, user.fullName, verificationToken, clientOrigin, verificationCode);
 
     // Strict security: Do NOT issue tokens on signup. User must verify email first.
     return res.status(201).json({
@@ -92,22 +94,31 @@ export const signup = async (req: Request, res: Response, next: NextFunction) =>
 
 export const verifyEmail = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { token } = req.body;
-    if (!token) {
-      return res.status(400).json({ error: 'Verification token is required' });
+    const { token, email, code } = req.body;
+    let user;
+
+    if (token) {
+      user = await User.findOne({
+        verificationToken: token,
+        verificationTokenExpires: { $gt: new Date() },
+      }).select('+verificationToken +verificationTokenExpires');
+    } else if (email && code) {
+      user = await User.findOne({
+        email: email.toLowerCase().trim(),
+        verificationCode: code.toString().trim(),
+        verificationTokenExpires: { $gt: new Date() },
+      }).select('+verificationCode +verificationTokenExpires');
+    } else {
+      return res.status(400).json({ error: 'Verification token or 6-digit code is required' });
     }
 
-    const user = await User.findOne({
-      verificationToken: token,
-      verificationTokenExpires: { $gt: new Date() },
-    }).select('+verificationToken +verificationTokenExpires');
-
     if (!user) {
-      return res.status(400).json({ error: 'Invalid or expired email verification link' });
+      return res.status(400).json({ error: 'Invalid or expired email verification link or code' });
     }
 
     user.emailVerified = true;
     user.verificationToken = undefined;
+    user.verificationCode = undefined;
     user.verificationTokenExpires = undefined;
 
     // Issue tokens now that the account is officially verified
@@ -153,14 +164,16 @@ export const resendVerificationEmail = async (req: any, res: Response, next: Nex
     }
 
     const verificationToken = crypto.randomBytes(32).toString('hex');
+    const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
     user.verificationToken = verificationToken;
+    user.verificationCode = verificationCode;
     user.verificationTokenExpires = new Date(Date.now() + 24 * 60 * 60 * 1000);
     await user.save();
 
     const clientOrigin = req.get('origin') || (req.headers.origin as string | undefined);
-    await emailService.sendVerificationEmail(user.email, user.fullName, verificationToken, clientOrigin);
+    await emailService.sendVerificationEmail(user.email, user.fullName, verificationToken, clientOrigin, verificationCode);
 
-    return res.json({ message: 'A new verification link has been sent to your email!' });
+    return res.json({ message: 'A new verification email and code has been sent!' });
   } catch (err) {
     next(err);
   }
@@ -183,14 +196,94 @@ export const login = async (req: Request, res: Response, next: NextFunction) => 
     // Block login if email is not verified
     if (!user.emailVerified) {
       return res.status(403).json({
-        error: 'Please verify your email address before logging in. Check your inbox for the verification link.',
+        error: 'Please verify your email address before logging in. Check your inbox for the verification link or code.',
         emailVerified: false,
         email: user.email,
       });
     }
 
-    const { accessToken, refreshToken } = generateTokens(user._id);
+    // Generate 6-digit login OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    user.loginOtpHash = await bcrypt.hash(otp, 10);
+    user.loginOtpExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+    await user.save();
 
+    const accessSecret = process.env.JWT_ACCESS_SECRET || 'givehub_jwt_access_secret_sprinkl_2026_super_key';
+    const tempLoginToken = jwt.sign(
+      { userId: user._id, email: user.email, purpose: 'login_otp' },
+      accessSecret,
+      { expiresIn: '10m' }
+    );
+
+    // Send 2FA verification email with copy-ready code
+    await emailService.sendLoginOtpEmail(user.email, user.fullName, otp);
+
+    return res.json({
+      requireOtp: true,
+      message: 'A 6-digit verification code has been sent to your email.',
+      email: user.email,
+      tempLoginToken,
+    });
+  } catch (err: any) {
+    if (err.name === 'ZodError') {
+      return res.status(400).json({ error: err.errors[0].message });
+    }
+    next(err);
+  }
+};
+
+/**
+ * Verify 6-digit login OTP and issue auth tokens
+ */
+export const verifyLoginOtp = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { email, code, tempLoginToken } = req.body;
+    if (!email || !code) {
+      return res.status(400).json({ error: 'Email and 6-digit verification code are required' });
+    }
+
+    const cleanCode = String(code).trim();
+    if (cleanCode.length !== 6) {
+      return res.status(400).json({ error: 'Verification code must be 6 digits' });
+    }
+
+    let userId: string | null = null;
+    if (tempLoginToken) {
+      try {
+        const accessSecret = process.env.JWT_ACCESS_SECRET || 'givehub_jwt_access_secret_sprinkl_2026_super_key';
+        const decoded = jwt.verify(tempLoginToken, accessSecret) as any;
+        if (decoded && decoded.purpose === 'login_otp') {
+          userId = decoded.userId;
+        }
+      } catch (e) {
+        // Token expired or invalid signature, continue with email lookup
+      }
+    }
+
+    const query: any = { email: email.toLowerCase().trim() };
+    if (userId) {
+      query._id = userId;
+    }
+
+    const user = await User.findOne(query).select('+loginOtpHash +loginOtpExpires');
+    if (!user || !user.loginOtpHash || !user.loginOtpExpires) {
+      return res.status(400).json({ error: 'No active login session found. Please sign in again.' });
+    }
+
+    if (user.loginOtpExpires < new Date()) {
+      return res.status(400).json({ error: 'Verification code has expired. Please request a new one.' });
+    }
+
+    const isMatch = await bcrypt.compare(cleanCode, user.loginOtpHash);
+    if (!isMatch) {
+      return res.status(400).json({ error: 'Invalid verification code. Please check your email and try again.' });
+    }
+
+    // Clear OTP
+    user.loginOtpHash = undefined;
+    user.loginOtpExpires = undefined;
+
+    const { accessToken, refreshToken } = generateTokens(user._id);
     user.refreshTokenHash = await bcrypt.hash(refreshToken, 10);
     await user.save();
 
@@ -208,10 +301,45 @@ export const login = async (req: Request, res: Response, next: NextFunction) => 
         kyc: user.kyc,
       },
     });
-  } catch (err: any) {
-    if (err.name === 'ZodError') {
-      return res.status(400).json({ error: err.errors[0].message });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * Resend login verification code
+ */
+export const resendLoginOtp = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { email } = req.body;
+    if (!email) {
+      return res.status(400).json({ error: 'Email is required' });
     }
+
+    const user = await User.findOne({ email: email.toLowerCase().trim() }).select('+loginOtpHash +loginOtpExpires');
+    if (!user) {
+      return res.status(404).json({ error: 'User account not found' });
+    }
+
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    user.loginOtpHash = await bcrypt.hash(otp, 10);
+    user.loginOtpExpires = new Date(Date.now() + 10 * 60 * 1000);
+    await user.save();
+
+    await emailService.sendLoginOtpEmail(user.email, user.fullName, otp);
+
+    const accessSecret = process.env.JWT_ACCESS_SECRET || 'givehub_jwt_access_secret_sprinkl_2026_super_key';
+    const tempLoginToken = jwt.sign(
+      { userId: user._id, email: user.email, purpose: 'login_otp' },
+      accessSecret,
+      { expiresIn: '10m' }
+    );
+
+    return res.json({
+      message: 'A new 6-digit login verification code has been sent to your email.',
+      tempLoginToken,
+    });
+  } catch (err) {
     next(err);
   }
 };

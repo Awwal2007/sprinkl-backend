@@ -16,6 +16,9 @@ export interface IUser extends Document {
   emailVerified: boolean;
   verificationToken?: string;
   verificationTokenExpires?: Date;
+  verificationCode?: string;
+  loginOtpHash?: string;
+  loginOtpExpires?: Date;
   passwordResetToken?: string;
   passwordResetExpires?: Date;
   kyc: {
@@ -59,6 +62,9 @@ const userSchema = new Schema<IUser>(
     emailVerified: { type: Boolean, default: false },
     verificationToken: { type: String, select: false },
     verificationTokenExpires: { type: Date, select: false },
+    verificationCode: { type: String, select: false },
+    loginOtpHash: { type: String, select: false },
+    loginOtpExpires: { type: Date, select: false },
     passwordResetToken: { type: String, select: false },
     passwordResetExpires: { type: Date, select: false },
 
