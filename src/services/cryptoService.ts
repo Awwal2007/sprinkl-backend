@@ -268,12 +268,19 @@ export class CryptoService {
         console.warn(
           `[CryptoService] NOWPayments payout failed: ${npErr.message}. Checking available fallback gateways...`
         );
-        // If no other payout gateway is configured, throw the error
-        if (
-          !process.env.OXAPAY_PAYOUT_API_KEY &&
-          !process.env.TRON_HOT_WALLET_PRIVATE_KEY &&
-          !process.env.BSC_HOT_WALLET_PRIVATE_KEY
-        ) {
+        const hasValidTronHotWallet =
+          Boolean(process.env.TRON_HOT_WALLET_PRIVATE_KEY) &&
+          /^[0-9a-fA-F]{64}$/.test((process.env.TRON_HOT_WALLET_PRIVATE_KEY || '').trim());
+        const rawBsc = (process.env.BSC_HOT_WALLET_PRIVATE_KEY || '').trim().replace(/^0x/, '');
+        const hasValidBscHotWallet =
+          Boolean(process.env.BSC_HOT_WALLET_PRIVATE_KEY) && /^[0-9a-fA-F]{64}$/.test(rawBsc);
+
+        const hasFallbackForChain =
+          Boolean(process.env.OXAPAY_PAYOUT_API_KEY) ||
+          (chain === 'TRC20' && hasValidTronHotWallet) ||
+          (chain === 'BEP20' && hasValidBscHotWallet);
+
+        if (!hasFallbackForChain) {
           throw npErr;
         }
       }
