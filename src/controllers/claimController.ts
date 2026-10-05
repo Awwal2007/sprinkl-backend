@@ -197,13 +197,10 @@ export const submitClaim = async (req: Request, res: Response, next: NextFunctio
         });
       }
 
-      // Proactively check if the address is a smart contract address (e.g. exchange deposit proxy)
+      // Log notice if destination address has contract bytecode / exchange proxy
       const isContract = await cryptoService.isContractAddress(data.walletAddress, chain);
       if (isContract) {
-        return res.status(400).json({
-          error:
-            'Exchange deposit and smart contract addresses are not supported. Payout processors will reject them. Please enter a personal self-custody wallet address (e.g. Trust Wallet or MetaMask).',
-        });
+        console.warn(`[submitClaim] Notice: Address ${data.walletAddress} (${chain}) is a smart contract / exchange proxy address.`);
       }
 
       normalizedDestination = cryptoService.normalizeAddress(data.walletAddress, chain);
