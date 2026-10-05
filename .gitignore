@@ -5,3 +5,4 @@ dist
 *.log
 coverage
 seed-admin.js
+scratch*

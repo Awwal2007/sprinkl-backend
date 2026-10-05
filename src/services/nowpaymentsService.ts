@@ -191,10 +191,19 @@ export class NowPaymentsService {
     }
 
     try {
-      const res = await axios.post(`${this.getBaseUrl()}/auth`, {
-        email: email.trim(),
-        password: password.trim(),
-      });
+      const res = await axios.post(
+        `${this.getBaseUrl()}/auth`,
+        {
+          email: email.trim(),
+          password: password.trim(),
+        },
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': this.getApiKey(),
+          },
+        }
+      );
 
       const token = res.data?.token;
       if (!token) {
