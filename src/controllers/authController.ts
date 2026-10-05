@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { z } from 'zod';
 import User from '../models/User';
+import Admin from '../models/Admin';
 import { AuthRequest } from '../middleware/auth';
 
 import crypto from 'crypto';
@@ -183,8 +184,48 @@ export const resendVerificationEmail = async (req: any, res: Response, next: Nex
 export const login = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const data = loginSchema.parse(req.body);
+    const emailLower = data.email.toLowerCase().trim();
 
-    const user = await User.findOne({ email: data.email.toLowerCase() }).select('+passwordHash');
+    // 1. Check if user is an Admin in the dedicated Admin model
+    const admin = await Admin.findOne({ email: emailLower }).select('+passwordHash');
+    if (admin) {
+      if (!admin.isActive) {
+        return res.status(403).json({ error: 'Administrator account is deactivated.' });
+      }
+
+      const isMatch = await bcrypt.compare(data.password, admin.passwordHash);
+      if (!isMatch) {
+        return res.status(401).json({ error: 'Invalid email or password' });
+      }
+
+      // Generate 6-digit login OTP for admin
+      const otp = Math.floor(100000 + Math.random() * 900000).toString();
+      admin.loginOtpHash = await bcrypt.hash(otp, 10);
+      admin.loginOtpExpires = new Date(Date.now() + 10 * 60 * 1000);
+      await admin.save();
+
+      const accessSecret =
+        process.env.JWT_ACCESS_SECRET ||
+        'givehub_jwt_access_secret_sprinkl_2026_super_key';
+      const tempLoginToken = jwt.sign(
+        { userId: admin._id, email: admin.email, role: 'admin', isAdmin: true, purpose: 'login_otp' },
+        accessSecret,
+        { expiresIn: '10m' }
+      );
+
+      await emailService.sendLoginOtpEmail(admin.email, admin.fullName, otp);
+
+      return res.json({
+        requireOtp: true,
+        message: 'A 6-digit verification code has been sent to your email.',
+        email: admin.email,
+        tempLoginToken,
+        isAdmin: true,
+      });
+    }
+
+    // 2. Otherwise, check User model
+    const user = await User.findOne({ email: emailLower }).select('+passwordHash');
     if (!user) {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
@@ -266,6 +307,44 @@ export const verifyLoginOtp = async (req: Request, res: Response, next: NextFunc
       query._id = userId;
     }
 
+    // 1. Check if verifying an Admin in dedicated Admin model
+    const admin = await Admin.findOne(query).select('+loginOtpHash +loginOtpExpires');
+    if (admin && admin.loginOtpHash && admin.loginOtpExpires) {
+      if (admin.loginOtpExpires < new Date()) {
+        return res.status(400).json({ error: 'Verification code has expired. Please request a new one.' });
+      }
+
+      const isMatch = await bcrypt.compare(cleanCode, admin.loginOtpHash);
+      if (!isMatch) {
+        return res.status(400).json({ error: 'Invalid verification code. Please check your email and try again.' });
+      }
+
+      admin.loginOtpHash = undefined;
+      admin.loginOtpExpires = undefined;
+      admin.lastLoginAt = new Date();
+      admin.lastActiveAt = new Date();
+
+      const { accessToken, refreshToken } = generateTokens(admin._id);
+      admin.refreshTokenHash = await bcrypt.hash(refreshToken, 10);
+      await admin.save();
+
+      return res.json({
+        message: 'Admin login successful',
+        accessToken,
+        refreshToken,
+        user: {
+          id: admin._id,
+          fullName: admin.fullName,
+          email: admin.email,
+          role: 'admin',
+          adminRole: admin.role,
+          emailVerified: true,
+          isAdmin: true,
+        },
+      });
+    }
+
+    // 2. Otherwise, verify User model
     const user = await User.findOne(query).select('+loginOtpHash +loginOtpExpires');
     if (!user || !user.loginOtpHash || !user.loginOtpExpires) {
       return res.status(400).json({ error: 'No active login session found. Please sign in again.' });
@@ -320,7 +399,36 @@ export const resendLoginOtp = async (req: Request, res: Response, next: NextFunc
       return res.status(400).json({ error: 'Email is required' });
     }
 
-    const user = await User.findOne({ email: email.toLowerCase().trim() }).select('+loginOtpHash +loginOtpExpires');
+    const emailLower = email.toLowerCase().trim();
+
+    // 1. Check if Admin
+    const admin = await Admin.findOne({ email: emailLower }).select('+loginOtpHash +loginOtpExpires');
+    if (admin) {
+      const otp = Math.floor(100000 + Math.random() * 900000).toString();
+      admin.loginOtpHash = await bcrypt.hash(otp, 10);
+      admin.loginOtpExpires = new Date(Date.now() + 10 * 60 * 1000);
+      await admin.save();
+
+      await emailService.sendLoginOtpEmail(admin.email, admin.fullName, otp);
+
+      const accessSecret =
+        process.env.JWT_ACCESS_SECRET ||
+        'givehub_jwt_access_secret_sprinkl_2026_super_key';
+      const tempLoginToken = jwt.sign(
+        { userId: admin._id, email: admin.email, role: 'admin', isAdmin: true, purpose: 'login_otp' },
+        accessSecret,
+        { expiresIn: '10m' }
+      );
+
+      return res.json({
+        message: 'A new 6-digit login verification code has been sent to your email.',
+        tempLoginToken,
+        isAdmin: true,
+      });
+    }
+
+    // 2. Otherwise check User
+    const user = await User.findOne({ email: emailLower }).select('+loginOtpHash +loginOtpExpires');
     if (!user) {
       return res.status(404).json({ error: 'User account not found' });
     }
@@ -358,6 +466,21 @@ export const refreshToken = async (req: Request, res: Response, next: NextFuncti
     const refreshSecret = process.env.JWT_REFRESH_SECRET || 'givehub_jwt_refresh_secret_sprinkl_2026_super_key';
     const decoded = jwt.verify(token, refreshSecret) as { userId: string };
 
+    // Check Admin model first
+    const admin = await Admin.findById(decoded.userId).select('+refreshTokenHash');
+    if (admin && admin.refreshTokenHash) {
+      const isMatch = await bcrypt.compare(token, admin.refreshTokenHash);
+      if (isMatch) {
+        if (!admin.isActive) {
+          return res.status(403).json({ error: 'Admin account deactivated', code: 'ADMIN_DEACTIVATED' });
+        }
+        const { accessToken, refreshToken: newRefreshToken } = generateTokens(admin._id);
+        admin.refreshTokenHash = await bcrypt.hash(newRefreshToken, 10);
+        await admin.save();
+        return res.json({ accessToken, refreshToken: newRefreshToken });
+      }
+    }
+
     const user = await User.findById(decoded.userId).select('+refreshTokenHash');
     if (!user || !user.refreshTokenHash) {
       return res.status(401).json({ error: 'Session expired or invalidated', code: 'SESSION_EXPIRED' });
@@ -391,6 +514,22 @@ export const refreshToken = async (req: Request, res: Response, next: NextFuncti
 };
 
 export const me = async (req: AuthRequest, res: Response) => {
+  if (req.admin) {
+    return res.json({
+      user: {
+        id: req.admin._id,
+        fullName: req.admin.fullName,
+        email: req.admin.email,
+        role: 'admin',
+        adminRole: req.admin.role,
+        emailVerified: true,
+        isAdmin: true,
+        lastLoginAt: req.admin.lastLoginAt,
+        lastActiveAt: req.admin.lastActiveAt,
+      },
+    });
+  }
+
   if (!req.user) {
     return res.status(401).json({ error: 'Not authenticated' });
   }
@@ -407,8 +546,30 @@ export const me = async (req: AuthRequest, res: Response) => {
       paystackDvaAccountNumber: req.user.paystackDvaAccountNumber,
       paystackDvaBankName: req.user.paystackDvaBankName,
       cryptoDepositAddresses: req.user.cryptoDepositAddresses,
+      lastActiveAt: req.user.lastActiveAt,
+      isOnline: req.user.isOnline,
     },
   });
+};
+
+/**
+ * User & Admin heartbeat ping to mark actively online
+ */
+export const heartbeat = async (req: AuthRequest, res: Response) => {
+  try {
+    const now = new Date();
+    if (req.admin) {
+      await Admin.findByIdAndUpdate(req.admin._id, { lastActiveAt: now });
+      return res.json({ ok: true, activeAt: now, role: 'admin' });
+    }
+    if (req.user) {
+      await User.findByIdAndUpdate(req.user._id, { lastActiveAt: now, isOnline: true });
+      return res.json({ ok: true, activeAt: now, role: req.user.role || 'host' });
+    }
+    return res.status(401).json({ error: 'Unauthorized' });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
 };
 
 /**

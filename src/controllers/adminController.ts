@@ -1,11 +1,14 @@
 import { Request, Response, NextFunction } from 'express';
+import bcrypt from 'bcryptjs';
 import Transaction from '../models/Transaction';
 import User from '../models/User';
+import Admin from '../models/Admin';
 import Claim from '../models/Claim';
 import LedgerEntry from '../models/LedgerEntry';
 import Giveaway from '../models/Giveaway';
 import SupportSession from '../models/SupportSession';
 import WalletAccount from '../models/WalletAccount';
+import { getOnlineUserIds, getOnlineUsersCount } from '../socket';
 
 /**
  * Get system external provider transactions with pagination & filtering
@@ -115,11 +118,37 @@ export const getOverviewReport = async (req: Request, res: Response, next: NextF
     const totalSlotsClaimed = slotStats[0]?.totalSlotsClaimed || 0;
     const claimRate = totalSlots > 0 ? Math.round((totalSlotsClaimed / totalSlots) * 100) : 0;
 
-    // 5. Users Breakdown (excluding administrators from user counts)
+    // 5. Users Breakdown & Active Users Tracking
+    const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
+    const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
     const totalUsers = await User.countDocuments({ role: { $ne: 'admin' } });
     const verifiedUsers = await User.countDocuments({ emailVerified: true, role: { $ne: 'admin' } });
     const hostUsers = await User.countDocuments({ role: 'host' });
-    const adminUsers = await User.countDocuments({ role: 'admin' });
+
+    // Count admins from dedicated Admin model + legacy admin user records
+    const dedicatedAdminCount = await Admin.countDocuments({ isActive: true });
+    const legacyAdminUsers = await User.countDocuments({ role: 'admin' });
+    const totalAdmins = dedicatedAdminCount || legacyAdminUsers;
+
+    // Real-time active users calculations
+    const dbActiveNow = await User.countDocuments({
+      role: { $ne: 'admin' },
+      $or: [{ isOnline: true }, { lastActiveAt: { $gte: fifteenMinutesAgo } }],
+    });
+    const socketCount = getOnlineUsersCount();
+    const activeNow = Math.max(dbActiveNow, socketCount);
+
+    const activeToday = await User.countDocuments({
+      role: { $ne: 'admin' },
+      lastActiveAt: { $gte: twentyFourHoursAgo },
+    });
+
+    const activeThisWeek = await User.countDocuments({
+      role: { $ne: 'admin' },
+      lastActiveAt: { $gte: sevenDaysAgo },
+    });
 
     // 6. Claims Breakdown
     const totalClaims = await Claim.countDocuments();
@@ -158,7 +187,10 @@ export const getOverviewReport = async (req: Request, res: Response, next: NextF
         total: totalUsers,
         verified: verifiedUsers,
         hosts: hostUsers,
-        admins: adminUsers,
+        admins: totalAdmins,
+        activeNow,
+        activeToday,
+        activeThisWeek,
       },
       claims: {
         total: totalClaims,
@@ -279,32 +311,62 @@ export const getUsers = async (req: Request, res: Response, next: NextFunction) 
     const page = Math.max(1, parseInt(req.query.page as string) || 1);
     const limit = Math.min(50, Math.max(1, parseInt(req.query.limit as string) || 15));
     const role = (req.query.role as string) || 'all';
+    const activity = (req.query.activity as string) || 'all'; // 'online' | 'today' | 'week' | 'all'
     const search = (req.query.search as string) || '';
 
     const query: any = {};
     if (role !== 'all') query.role = role;
 
+    const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
+    const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
+    const onlineIds = getOnlineUserIds();
+
+    if (activity === 'online') {
+      query.$or = [
+        { isOnline: true },
+        { lastActiveAt: { $gte: fifteenMinutesAgo } },
+        { _id: { $in: onlineIds } },
+      ];
+    } else if (activity === 'today') {
+      query.lastActiveAt = { $gte: twentyFourHoursAgo };
+    } else if (activity === 'week') {
+      query.lastActiveAt = { $gte: sevenDaysAgo };
+    }
+
     if (search.trim()) {
       const regex = new RegExp(search.trim(), 'i');
-      query.$or = [{ fullName: regex }, { email: regex }];
+      if (query.$or) {
+        query.$and = [{ $or: query.$or }, { $or: [{ fullName: regex }, { email: regex }] }];
+        delete query.$or;
+      } else {
+        query.$or = [{ fullName: regex }, { email: regex }];
+      }
     }
 
     const total = await User.countDocuments(query);
     const users = await User.find(query)
       .select('-passwordHash')
-      .sort({ createdAt: -1 })
+      .sort({ lastActiveAt: -1, createdAt: -1 })
       .skip((page - 1) * limit)
       .limit(limit);
 
-    // Fetch balances for each user
+    // Fetch balances for each user & calculate active status
     const usersWithBalances = await Promise.all(
       users.map(async (u) => {
         const wallets = await WalletAccount.find({ user: u._id });
         const ngnWallet = wallets.find((w) => w.currency === 'NGN');
         const usdtWallet = wallets.find((w) => w.currency === 'USDT');
 
+        const isUserOnline =
+          Boolean(u.isOnline) ||
+          onlineIds.includes(String(u._id)) ||
+          Boolean(u.lastActiveAt && u.lastActiveAt >= fifteenMinutesAgo);
+
         return {
           ...u.toObject(),
+          isOnline: isUserOnline,
           balances: {
             NGN: {
               available: ngnWallet?.available || 0,
@@ -319,6 +381,13 @@ export const getUsers = async (req: Request, res: Response, next: NextFunction) 
       })
     );
 
+    const onlineDbCount = await User.countDocuments({
+      $or: [{ isOnline: true }, { lastActiveAt: { $gte: fifteenMinutesAgo } }],
+    });
+    const activeTodayDbCount = await User.countDocuments({
+      lastActiveAt: { $gte: twentyFourHoursAgo },
+    });
+
     return res.json({
       users: usersWithBalances,
       pagination: {
@@ -326,6 +395,10 @@ export const getUsers = async (req: Request, res: Response, next: NextFunction) 
         limit,
         total,
         totalPages: Math.ceil(total / limit) || 1,
+      },
+      stats: {
+        onlineCount: Math.max(onlineIds.length, onlineDbCount),
+        activeTodayCount: activeTodayDbCount,
       },
     });
   } catch (err) {
@@ -534,4 +607,154 @@ export const updateKycThreshold = async (req: Request, res: Response, next: Next
     next(err);
   }
 };
+
+/**
+ * Admin: Get currently active users list and online metrics
+ */
+export const getActiveUsers = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
+    const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const onlineIds = getOnlineUserIds();
+
+    const activeUsers = await User.find({
+      $or: [
+        { isOnline: true },
+        { lastActiveAt: { $gte: fifteenMinutesAgo } },
+        { _id: { $in: onlineIds } },
+      ],
+      role: { $ne: 'admin' },
+    })
+      .select('fullName email phone role lastActiveAt isOnline knownLocations emailVerified createdAt')
+      .sort({ lastActiveAt: -1 })
+      .limit(50);
+
+    const activeTodayCount = await User.countDocuments({
+      lastActiveAt: { $gte: twentyFourHoursAgo },
+      role: { $ne: 'admin' },
+    });
+
+    const totalActiveNow = Math.max(onlineIds.length, activeUsers.length);
+
+    return res.json({
+      onlineCount: totalActiveNow,
+      activeTodayCount,
+      users: activeUsers.map((u) => {
+        const isCurrentlyOnline =
+          Boolean(u.isOnline) ||
+          onlineIds.includes(String(u._id)) ||
+          Boolean(u.lastActiveAt && u.lastActiveAt >= fifteenMinutesAgo);
+
+        return {
+          ...u.toObject(),
+          isOnline: isCurrentlyOnline,
+        };
+      }),
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * Admin: Get all administrators from dedicated Admin model
+ */
+export const getAdmins = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const admins = await Admin.find().select('-passwordHash').sort({ createdAt: -1 });
+
+    // Also include legacy admin users from User collection if any exist
+    const legacyAdminUsers = await User.find({ role: 'admin' }).select('-passwordHash');
+
+    return res.json({
+      admins,
+      legacyAdminUsers,
+      total: admins.length + legacyAdminUsers.length,
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * Admin: Create a new administrator in the dedicated Admin model
+ */
+export const createAdmin = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { fullName, email, password, role } = req.body;
+    if (!fullName || !email || !password) {
+      return res.status(400).json({ error: 'Full name, email, and password are required' });
+    }
+    if (password.length < 8) {
+      return res.status(400).json({ error: 'Password must be at least 8 characters' });
+    }
+
+    const emailLower = email.toLowerCase().trim();
+    const existing = await Admin.findOne({ email: emailLower });
+    if (existing) {
+      return res.status(400).json({ error: 'An administrator with this email already exists' });
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    const passwordHash = await bcrypt.hash(password, salt);
+
+    const newAdmin = await Admin.create({
+      fullName: fullName.trim(),
+      email: emailLower,
+      passwordHash,
+      role: ['superadmin', 'admin', 'moderator'].includes(role) ? role : 'admin',
+      isActive: true,
+    });
+
+    return res.status(201).json({
+      message: `Admin ${newAdmin.fullName} created successfully`,
+      admin: {
+        id: newAdmin._id,
+        fullName: newAdmin.fullName,
+        email: newAdmin.email,
+        role: newAdmin.role,
+        isActive: newAdmin.isActive,
+        createdAt: newAdmin.createdAt,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * Admin: Update administrator status (active/inactive) or role
+ */
+export const updateAdminStatus = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { adminId } = req.params;
+    const { isActive, role } = req.body;
+
+    const admin = await Admin.findById(adminId);
+    if (!admin) {
+      return res.status(404).json({ error: 'Administrator not found' });
+    }
+
+    if (isActive !== undefined) admin.isActive = Boolean(isActive);
+    if (role && ['superadmin', 'admin', 'moderator'].includes(role)) {
+      admin.role = role;
+    }
+
+    await admin.save();
+
+    return res.json({
+      message: `Admin ${admin.fullName} updated successfully`,
+      admin: {
+        id: admin._id,
+        fullName: admin.fullName,
+        email: admin.email,
+        role: admin.role,
+        isActive: admin.isActive,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
 

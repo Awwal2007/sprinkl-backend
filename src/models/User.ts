@@ -49,6 +49,8 @@ export interface IUser extends Document {
   paystackDvaAccountNumber?: string;
   paystackDvaBankName?: string;
   refreshTokenHash?: string;
+  lastActiveAt?: Date;
+  isOnline?: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -128,6 +130,8 @@ const userSchema = new Schema<IUser>(
     paystackDvaBankName: { type: String, trim: true },
 
     refreshTokenHash: { type: String, select: false },
+    lastActiveAt: { type: Date, default: Date.now, index: true },
+    isOnline: { type: Boolean, default: false },
   },
   { timestamps: true }
 );

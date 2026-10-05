@@ -13,6 +13,7 @@ router.post('/verify-email', authLimiter, authController.verifyEmail);
 router.post('/resend-verification', authLimiter, optionalAuth as any, authController.resendVerificationEmail as any);
 router.post('/refresh', authController.refreshToken);
 router.get('/me', authenticateToken as any, authController.me as any);
+router.post('/heartbeat', authenticateToken as any, authController.heartbeat as any);
 
 // Password reset (3-step OTP flow)
 router.post('/forgot-password', authLimiter, authController.forgotPassword as any);

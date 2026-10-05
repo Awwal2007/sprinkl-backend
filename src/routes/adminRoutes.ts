@@ -22,10 +22,16 @@ router.get('/giveaways', adminController.getGiveaways);
 // Platform Claims Audit (Paginated)
 router.get('/claims', adminController.getClaims);
 
-// Users Directory & Role Management (Paginated)
+// Users Directory, Active Users & Role Management (Paginated)
 router.get('/users', adminController.getUsers);
+router.get('/active-users', adminController.getActiveUsers);
 router.patch('/users/:userId/role', adminController.updateUserRole);
 router.get('/flags', adminController.getFlaggedAccounts);
+
+// Dedicated Admin Model Management
+router.get('/admins', adminController.getAdmins);
+router.post('/admins', adminController.createAdmin);
+router.patch('/admins/:adminId', adminController.updateAdminStatus);
 
 // Payment Threshold Requests Management (supports /threshold-requests and legacy /kyc-requests)
 router.get('/threshold-requests', adminController.getKycRequests);
