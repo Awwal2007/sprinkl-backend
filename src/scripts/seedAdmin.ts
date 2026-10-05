@@ -47,13 +47,6 @@ async function seedAdmin() {
     await user.save();
     console.log(`🌟 Success! User "${user.fullName}" is confirmed as ADMIN.`);
   } else {
-    const seedPassword = process.env.ADMIN_SEED_PASSWORD;
-    if (!seedPassword) {
-      throw new Error('ADMIN_SEED_PASSWORD environment variable is required to create the admin account.');
-    }
-    const salt = await bcrypt.genSalt(10);
-    const passwordHash = await bcrypt.hash(seedPassword, salt);
-
     user = await User.create({
       fullName: 'Sprinkl Administrator',
       email: TARGET_EMAIL,

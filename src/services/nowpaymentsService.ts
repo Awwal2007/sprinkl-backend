@@ -280,12 +280,15 @@ export class NowPaymentsService {
         explorerUrl,
       };
     } catch (err: any) {
-      const msg =
+      let msg =
         err.response?.data?.message ||
         err.response?.data?.error ||
         err.message ||
         'Payout request failed';
       console.error('[NOWPayments Payout Error]:', msg, err.response?.data);
+      if (typeof msg === 'string' && msg.toLowerCase().includes('not whitelisted')) {
+        msg = `${msg}. (Action required: In your NOWPayments Dashboard under Settings > Payouts, disable "Address Whitelisting" or whitelist addresses so NOWPayments can disburse automated prize payouts to winners)`;
+      }
       throw new Error(`NOWPayments payout failed: ${msg}`);
     }
   }

@@ -288,25 +288,31 @@ export class CryptoService {
 
     // 2. Fallback to OxaPay Payout API if legacy key exists
     if (process.env.OXAPAY_PAYOUT_API_KEY) {
-      const amountUsdtDecimal = amountUsdtInteger / 1_000_000;
-      console.log(
-        `[CryptoService] Routing payout via OxaPay API: ${amountUsdtDecimal} USDT to ${destinationAddress} (${chain})`
-      );
-      const res = await OxaPayService.sendPayout({
-        address: destinationAddress,
-        amountUsdt: amountUsdtDecimal,
-        chain,
-        description: `Sprinkl Giveaway ${reference || ''}`.trim(),
-      });
+      try {
+        const amountUsdtDecimal = amountUsdtInteger / 1_000_000;
+        console.log(
+          `[CryptoService] Routing payout via OxaPay API: ${amountUsdtDecimal} USDT to ${destinationAddress} (${chain})`
+        );
+        const res = await OxaPayService.sendPayout({
+          address: destinationAddress,
+          amountUsdt: amountUsdtDecimal,
+          chain,
+          description: `Sprinkl Giveaway ${reference || ''}`.trim(),
+        });
 
-      return {
-        success: true,
-        txHash: res.txHash || res.trackId,
-        chain,
-        amount: amountUsdtInteger,
-        destination: destinationAddress,
-        explorerUrl: res.explorerUrl,
-      };
+        return {
+          success: true,
+          txHash: res.txHash || res.trackId,
+          chain,
+          amount: amountUsdtInteger,
+          destination: destinationAddress,
+          explorerUrl: res.explorerUrl,
+        };
+      } catch (oxaErr: any) {
+        console.warn(
+          `[CryptoService] OxaPay payout failed: ${oxaErr.message}. Proceeding to direct on-chain hot wallet fallback...`
+        );
+      }
     }
 
     // 3. Fallback to direct on-chain hot wallet
