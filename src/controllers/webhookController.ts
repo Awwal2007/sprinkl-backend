@@ -14,8 +14,15 @@ export const handleFlutterwaveWebhook = async (req: Request, res: Response, next
     const secretHash = process.env.FLUTTERWAVE_SECRET_HASH;
     const signature = req.headers['verif-hash'];
 
-    if (secretHash && signature && signature !== secretHash) {
-      console.warn('[Flutterwave Webhook] Invalid signature received:', signature);
+    if (!secretHash || !signature || typeof signature !== 'string') {
+      console.warn('[Flutterwave Webhook] Rejected: Missing signature or FLUTTERWAVE_SECRET_HASH');
+      return res.status(401).send('Unauthorized webhook request');
+    }
+
+    const sigBuf = Buffer.from(signature);
+    const secretBuf = Buffer.from(secretHash);
+    if (sigBuf.length !== secretBuf.length || !crypto.timingSafeEqual(sigBuf, secretBuf)) {
+      console.warn('[Flutterwave Webhook] Rejected: Invalid signature');
       return res.status(401).send('Invalid signature');
     }
 
@@ -197,11 +204,29 @@ export const handleFlutterwaveWebhook = async (req: Request, res: Response, next
 
 export const handlePaystackWebhook = async (req: Request, res: Response, next: NextFunction) => {
   try {
+    const paystackSecret = process.env.PAYSTACK_SECRET_KEY;
+    const signature = req.headers['x-paystack-signature'];
+
+    if (!paystackSecret || !signature || typeof signature !== 'string') {
+      console.warn('[Paystack Webhook] Rejected: Missing signature or PAYSTACK_SECRET_KEY');
+      return res.status(401).send('Unauthorized webhook request');
+    }
+
+    const rawBody = JSON.stringify(req.body);
+    const computedHash = crypto.createHmac('sha512', paystackSecret).update(rawBody).digest('hex');
+    const computedBuf = Buffer.from(computedHash);
+    const sigBuf = Buffer.from(signature);
+
+    if (computedBuf.length !== sigBuf.length || !crypto.timingSafeEqual(computedBuf, sigBuf)) {
+      console.warn('[Paystack Webhook] Rejected: Invalid signature');
+      return res.status(401).send('Invalid signature');
+    }
+
     const event = req.body;
 
     if (event.event === 'charge.success') {
       const { amount, customer, reference } = event.data;
-      const email = customer.email;
+      const email = customer?.email;
 
       const user = await User.findOne({ email });
       if (user) {
@@ -233,41 +258,6 @@ export const handlePaystackWebhook = async (req: Request, res: Response, next: N
   } catch (err) {
     console.error('[Paystack Webhook Error]', err);
     return res.status(500).send('Webhook error');
-  }
-};
-
-export const handleCryptoDepositWebhook = async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const { userId, txHash, chain, amountUsdtInteger } = req.body;
-
-    const user = await User.findById(userId);
-    if (!user) return res.status(404).json({ error: 'User not found' });
-
-    const existingTx = await Transaction.findOne({ providerReference: txHash });
-    if (existingTx) return res.json({ message: 'Deposit already processed' });
-
-    const tx = await Transaction.create({
-      user: user._id,
-      provider: chain === 'TRC20' ? 'tron' : 'bsc',
-      providerReference: txHash,
-      direction: 'inbound',
-      currency: 'USDT',
-      amount: amountUsdtInteger,
-      status: 'success',
-      rawPayload: req.body,
-    });
-
-    await LedgerService.creditWallet({
-      userId: user._id,
-      currency: 'USDT',
-      amount: amountUsdtInteger,
-      referenceType: 'CryptoDeposit',
-      referenceId: tx._id,
-    });
-
-    return res.json({ message: 'Crypto deposit processed successfully' });
-  } catch (err) {
-    next(err);
   }
 };
 

@@ -161,8 +161,10 @@ export class NowPaymentsService {
       const hmac = crypto.createHmac('sha512', secret);
       hmac.update(jsonStr);
       const calculatedSig = hmac.digest('hex');
+      const calcBuf = Buffer.from(calculatedSig.toLowerCase());
+      const recBuf = Buffer.from(sig.toLowerCase());
 
-      return calculatedSig.toLowerCase() === sig.toLowerCase();
+      return calcBuf.length === recBuf.length && crypto.timingSafeEqual(calcBuf, recBuf);
     } catch (err) {
       console.error('[NOWPayments IPN Signature Error]:', err);
       return false;

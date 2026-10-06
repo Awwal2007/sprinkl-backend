@@ -8,6 +8,17 @@ export interface AuthRequest extends Request {
   admin?: IAdmin;
 }
 
+const getJwtAccessSecret = (): string => {
+  const secret = process.env.JWT_ACCESS_SECRET;
+  if (!secret) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('FATAL SECURITY ERROR: JWT_ACCESS_SECRET must be defined in production environment.');
+    }
+    return 'givehub_jwt_access_secret_sprinkl_2026_super_key';
+  }
+  return secret;
+};
+
 export const authenticateToken = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const authHeader = req.headers['authorization'];
@@ -17,9 +28,7 @@ export const authenticateToken = async (req: AuthRequest, res: Response, next: N
       return res.status(401).json({ error: 'Access token required', code: 'TOKEN_REQUIRED' });
     }
 
-    const secret =
-      process.env.JWT_ACCESS_SECRET ||
-      'givehub_jwt_access_secret_sprinkl_2026_super_key';
+    const secret = getJwtAccessSecret();
     const decoded = jwt.verify(token, secret) as {
       userId: string;
       role?: string;
@@ -97,9 +106,7 @@ export const optionalAuth = async (req: AuthRequest, res: Response, next: NextFu
     const token = authHeader && authHeader.split(' ')[1];
 
     if (token) {
-      const secret =
-        process.env.JWT_ACCESS_SECRET ||
-        'givehub_jwt_access_secret_sprinkl_2026_super_key';
+      const secret = getJwtAccessSecret();
       const decoded = jwt.verify(token, secret) as { userId: string };
 
       const admin = await Admin.findById(decoded.userId);

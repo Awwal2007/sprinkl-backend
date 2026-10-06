@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import errorHandler from './middleware/errorHandler';
+import { authenticateToken, requireAdmin } from './middleware/auth';
 
 import authRoutes from './routes/authRoutes';
 import walletRoutes from './routes/walletRoutes';
@@ -13,9 +14,21 @@ import supportRoutes from './routes/supportRoutes';
 
 const app = express();
 
+app.disable('x-powered-by');
 app.set('trust proxy', 1);
 
-app.use(helmet());
+app.use(
+  helmet({
+    contentSecurityPolicy: false, // Handled per-environment/CDN
+    crossOriginEmbedderPolicy: false,
+    hsts: {
+      maxAge: 31536000,
+      includeSubDomains: true,
+      preload: true,
+    },
+    frameguard: { action: 'deny' },
+  })
+);
 app.use(
   cors({
     origin:
@@ -49,7 +62,7 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-app.get('/api/health/providers', async (req, res) => {
+app.get('/api/health/providers', authenticateToken as any, requireAdmin as any, async (req, res) => {
   const flwSecret = process.env.FLUTTERWAVE_SECRET_KEY;
   let flwStatus: any = {
     configured: !!flwSecret,

@@ -459,6 +459,19 @@ export const verifyFlutterwavePayment = async (req: AuthRequest, res: Response, 
       });
     }
 
+    // Strict ownership verification: ensure the transaction belongs to the calling user
+    const userEmail = (user.email || '').toLowerCase().trim();
+    const flwEmail = (flwData.customer?.email || '').toLowerCase().trim();
+    const flwTxRef = String(flwData.tx_ref || '');
+    const userIdStr = user._id.toString();
+
+    const isOwner = (flwEmail && flwEmail === userEmail) || (flwTxRef && flwTxRef.includes(userIdStr));
+    if (!isOwner) {
+      return res.status(403).json({
+        error: 'Ownership mismatch: This payment transaction belongs to a different user account.',
+      });
+    }
+
     const ref = flwData.tx_ref || String(transactionId);
     const existingTx = await Transaction.findOne({
       provider: 'flutterwave',
@@ -692,6 +705,19 @@ export const manualResolveDeposit = async (req: AuthRequest, res: Response, next
         }
 
         if (flwData && flwData.status === 'successful') {
+          // Strict ownership verification
+          const userEmail = (user.email || '').toLowerCase().trim();
+          const flwEmail = (flwData.customer?.email || '').toLowerCase().trim();
+          const flwTxRef = String(flwData.tx_ref || '');
+          const userIdStr = user._id.toString();
+
+          const isOwner = (flwEmail && flwEmail === userEmail) || (flwTxRef && flwTxRef.includes(userIdStr));
+          if (!isOwner) {
+            return res.status(403).json({
+              error: 'Ownership mismatch: This payment transaction does not belong to your account.',
+            });
+          }
+
           const amountKobo = Math.round(flwData.amount * 100);
           const tx = await Transaction.create({
             user: user._id,

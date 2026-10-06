@@ -6,6 +6,5 @@ const router = Router();
 router.post('/flutterwave', json(), webhookController.handleFlutterwaveWebhook);
 router.post('/paystack', json(), webhookController.handlePaystackWebhook);
 router.post('/nowpayments', json(), webhookController.handleNowPaymentsWebhook);
-router.post('/crypto-deposit', json(), webhookController.handleCryptoDepositWebhook);
 
 export default router;
