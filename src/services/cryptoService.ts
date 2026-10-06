@@ -265,6 +265,7 @@ export class CryptoService {
           destination: destinationAddress,
           explorerUrl: res.explorerUrl,
           provider: 'nowpayments' as const,
+          requiresEmailVerification: res.requiresEmailVerification,
         };
       } catch (npErr: any) {
         console.warn(

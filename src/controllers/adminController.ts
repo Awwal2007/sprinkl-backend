@@ -132,13 +132,16 @@ export const getOverviewReport = async (req: Request, res: Response, next: NextF
     const legacyAdminUsers = await User.countDocuments({ role: 'admin' });
     const totalAdmins = dedicatedAdminCount || legacyAdminUsers;
 
-    // Real-time active users calculations
-    const dbActiveNow = await User.countDocuments({
+    // Real-time active users calculations (strict 2-minute active threshold + live socket connections)
+    const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000);
+    const onlineIds = getOnlineUserIds();
+    const activeNow = await User.countDocuments({
       role: { $ne: 'admin' },
-      $or: [{ isOnline: true }, { lastActiveAt: { $gte: fifteenMinutesAgo } }],
+      $or: [
+        { _id: { $in: onlineIds } },
+        { isOnline: true, lastActiveAt: { $gte: twoMinutesAgo } },
+      ],
     });
-    const socketCount = getOnlineUsersCount();
-    const activeNow = Math.max(dbActiveNow, socketCount);
 
     const activeToday = await User.countDocuments({
       role: { $ne: 'admin' },
@@ -317,7 +320,7 @@ export const getUsers = async (req: Request, res: Response, next: NextFunction) 
     const query: any = {};
     if (role !== 'all') query.role = role;
 
-    const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
+    const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000);
     const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
@@ -325,9 +328,8 @@ export const getUsers = async (req: Request, res: Response, next: NextFunction) 
 
     if (activity === 'online') {
       query.$or = [
-        { isOnline: true },
-        { lastActiveAt: { $gte: fifteenMinutesAgo } },
         { _id: { $in: onlineIds } },
+        { isOnline: true, lastActiveAt: { $gte: twoMinutesAgo } },
       ];
     } else if (activity === 'today') {
       query.lastActiveAt = { $gte: twentyFourHoursAgo };
@@ -360,9 +362,8 @@ export const getUsers = async (req: Request, res: Response, next: NextFunction) 
         const usdtWallet = wallets.find((w) => w.currency === 'USDT');
 
         const isUserOnline =
-          Boolean(u.isOnline) ||
           onlineIds.includes(String(u._id)) ||
-          Boolean(u.lastActiveAt && u.lastActiveAt >= fifteenMinutesAgo);
+          Boolean(u.isOnline && u.lastActiveAt && u.lastActiveAt >= twoMinutesAgo);
 
         return {
           ...u.toObject(),
@@ -382,7 +383,10 @@ export const getUsers = async (req: Request, res: Response, next: NextFunction) 
     );
 
     const onlineDbCount = await User.countDocuments({
-      $or: [{ isOnline: true }, { lastActiveAt: { $gte: fifteenMinutesAgo } }],
+      $or: [
+        { _id: { $in: onlineIds } },
+        { isOnline: true, lastActiveAt: { $gte: twoMinutesAgo } },
+      ],
     });
     const activeTodayDbCount = await User.countDocuments({
       lastActiveAt: { $gte: twentyFourHoursAgo },
@@ -613,15 +617,14 @@ export const updateKycThreshold = async (req: Request, res: Response, next: Next
  */
 export const getActiveUsers = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
+    const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000);
     const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
     const onlineIds = getOnlineUserIds();
 
     const activeUsers = await User.find({
       $or: [
-        { isOnline: true },
-        { lastActiveAt: { $gte: fifteenMinutesAgo } },
         { _id: { $in: onlineIds } },
+        { isOnline: true, lastActiveAt: { $gte: twoMinutesAgo } },
       ],
       role: { $ne: 'admin' },
     })
@@ -629,21 +632,26 @@ export const getActiveUsers = async (req: Request, res: Response, next: NextFunc
       .sort({ lastActiveAt: -1 })
       .limit(50);
 
+    const totalActiveNow = await User.countDocuments({
+      $or: [
+        { _id: { $in: onlineIds } },
+        { isOnline: true, lastActiveAt: { $gte: twoMinutesAgo } },
+      ],
+      role: { $ne: 'admin' },
+    });
+
     const activeTodayCount = await User.countDocuments({
       lastActiveAt: { $gte: twentyFourHoursAgo },
       role: { $ne: 'admin' },
     });
-
-    const totalActiveNow = Math.max(onlineIds.length, activeUsers.length);
 
     return res.json({
       onlineCount: totalActiveNow,
       activeTodayCount,
       users: activeUsers.map((u) => {
         const isCurrentlyOnline =
-          Boolean(u.isOnline) ||
           onlineIds.includes(String(u._id)) ||
-          Boolean(u.lastActiveAt && u.lastActiveAt >= fifteenMinutesAgo);
+          Boolean(u.isOnline && u.lastActiveAt && u.lastActiveAt >= twoMinutesAgo);
 
         return {
           ...u.toObject(),

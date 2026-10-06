@@ -69,8 +69,37 @@ export class PayoutWorker {
         rawResponse = res;
       }
 
+      const requiresEmailConfirm = Boolean(rawResponse?.requiresEmailVerification);
+
+      if (requiresEmailConfirm) {
+        // Payout submitted to NOWPayments but held waiting for email verification
+        claim.status = 'processing';
+        claim.payoutReference = payoutRef;
+        claim.failureReason =
+          'NOWPayments withdrawal confirmation sent to email. Click the confirmation link in your NOWPayments email (or set NOWPAYMENTS_2FA_SECRET in .env for instant automated payouts).';
+        await claim.save();
+
+        await Transaction.create({
+          user: hostId,
+          relatedClaim: claim._id,
+          provider: providerName,
+          providerReference: payoutRef || claim.idempotencyKey,
+          direction: 'outbound',
+          currency: claim.currency,
+          amount: claim.amount,
+          status: 'pending',
+          rawPayload: rawResponse,
+        });
+
+        console.log(
+          `[PayoutWorker] Claim ${claim._id} marked as 'processing' (awaiting NOWPayments email/2FA confirmation).`
+        );
+        return;
+      }
+
       claim.status = 'paid';
       claim.payoutReference = payoutRef;
+      claim.failureReason = undefined;
       await claim.save();
 
       const beneficiaryName =

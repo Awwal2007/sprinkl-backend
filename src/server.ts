@@ -14,6 +14,11 @@ async function startServer() {
     await mongoose.connect(MONGODB_URI);
     console.log(`[Sprinkl] Connected to MongoDB database: ${mongoose.connection.name}`);
 
+    // Clean up stale isOnline presence flags from previous crashes/reboots
+    const User = (await import('./models/User')).default;
+    await User.updateMany({ isOnline: true }, { isOnline: false });
+    console.log(`[Sprinkl] Reset stale isOnline presence flags`);
+
     // Wrap Express app in a native http.Server so Socket.IO can attach
     const httpServer = http.createServer(app);
 
