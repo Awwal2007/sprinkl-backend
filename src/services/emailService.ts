@@ -36,6 +36,20 @@ class EmailService {
     actionText?: string;
   }) {
     return `
+      <!-- Schema.org microdata for Gmail Action / Quick Verification Card -->
+      <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "EmailMessage",
+        "description": "Your Sprinkl verification code is ${code}"
+      }
+      </script>
+
+      <!-- Invisible preheader text for Gmail & Apple Mail OTP extraction -->
+      <div style="display:none; font-size:1px; line-height:1px; max-height:0px; max-width:0px; opacity:0; overflow:hidden; mso-hide:all; font-family: sans-serif;">
+        Your Sprinkl verification code is: ${code}. Valid for ${expiryMinutes} minutes.
+      </div>
+
       <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #0b0f17; color: #f8fafc; padding: 40px 24px; border-radius: 16px; border: 1px solid #1e293b;">
         <div style="text-align: center; margin-bottom: 28px;">
           <h1 style="color: #10b981; font-size: 28px; font-weight: 800; margin: 0; letter-spacing: -0.5px;">Sprinkl</h1>
@@ -49,8 +63,11 @@ class EmailService {
             ${description}
           </p>
           
-          <!-- Copy-ready Verification Code Container -->
+          <!-- Copy-ready Verification Code Container with standard verification label -->
           <div style="margin: 24px auto; text-align: center;">
+            <p style="color: #94a3b8; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.5px; margin: 0 0 10px 0;">
+              Verification Code
+            </p>
             <div style="display: inline-block; background-color: #0b0f17; border: 2px solid #10b981; border-radius: 12px; padding: 16px 36px; user-select: all; -webkit-user-select: all;">
               <span style="font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace; font-size: 36px; font-weight: 900; letter-spacing: 6px; color: #10b981; user-select: all; -webkit-user-select: all;">${code}</span>
             </div>
@@ -90,15 +107,58 @@ class EmailService {
   }
 
   /**
+   * Helper to render clean plain text for email clients (Gmail / iOS Mail code parsers)
+   */
+  private renderPlainTextCode({
+    fullName,
+    code,
+    description,
+    expiryMinutes = 10,
+    actionUrl,
+  }: {
+    fullName: string;
+    code: string;
+    description: string;
+    expiryMinutes?: number;
+    actionUrl?: string;
+  }): string {
+    return [
+      `Your Sprinkl verification code is: ${code}`,
+      '',
+      `Hello ${fullName || 'Host'},`,
+      '',
+      description,
+      '',
+      `Verification Code: ${code}`,
+      '',
+      actionUrl ? `Direct link: ${actionUrl}` : '',
+      '',
+      `This code will expire in ${expiryMinutes} minutes.`,
+      'If you did not initiate this request, please secure your account immediately.',
+      '',
+      '— Sprinkl (https://sprinkl.biz)',
+    ]
+      .filter(Boolean)
+      .join('\n');
+  }
+
+  /**
    * Send login verification code (2FA)
    */
   async sendLoginOtpEmail(email: string, fullName: string, otp: string) {
+    const description = 'A sign-in attempt was requested for your Sprinkl account. Enter the verification code below to complete your login:';
     const html = this.renderCodeTemplate({
       title: 'Login Verification Code',
       subtitle: 'Host Account Security',
       fullName,
       code: otp,
-      description: 'A sign-in attempt was requested for your Sprinkl account. Enter the verification code below to complete your login:',
+      description,
+      expiryMinutes: 10,
+    });
+    const text = this.renderPlainTextCode({
+      fullName,
+      code: otp,
+      description,
       expiryMinutes: 10,
     });
 
@@ -111,8 +171,9 @@ class EmailService {
       const data = await this.resend.emails.send({
         from: this.fromEmail,
         to: email,
-        subject: `${otp} — Your Sprinkl Login Verification Code`,
+        subject: `[Sprinkl] Verification code: ${otp}`,
         html,
+        text,
       });
       return { success: true, data };
     } catch (err: any) {
@@ -134,16 +195,24 @@ class EmailService {
     const domain = clientOrigin || process.env.DOMAIN || 'https://www.sprinkl.biz';
     const verifyUrl = `${domain}/verify-email?token=${token}`;
     const displayCode = code || token.slice(0, 6).toUpperCase();
+    const description = 'Welcome to Sprinkl! To activate your host wallet and start launching giveaways, verify your email using this 6-digit code or the button below:';
 
     const html = this.renderCodeTemplate({
       title: 'Verify Your Email Address',
       subtitle: 'Automated Cash & Crypto Giveaways',
       fullName,
       code: displayCode,
-      description: 'Welcome to Sprinkl! To activate your host wallet and start launching giveaways, verify your email using this 6-digit code or the button below:',
+      description,
       expiryMinutes: 60 * 24, // 24 hours
       actionUrl: verifyUrl,
       actionText: 'Verify Email Address',
+    });
+    const text = this.renderPlainTextCode({
+      fullName,
+      code: displayCode,
+      description,
+      expiryMinutes: 60 * 24,
+      actionUrl: verifyUrl,
     });
 
     if (!this.resend) {
@@ -155,8 +224,9 @@ class EmailService {
       const data = await this.resend.emails.send({
         from: this.fromEmail,
         to: email,
-        subject: `${displayCode} — Verify your Sprinkl Host Account`,
+        subject: `[Sprinkl] Verification code: ${displayCode}`,
         html,
+        text,
       });
       return { success: true, data };
     } catch (err: any) {
@@ -169,12 +239,19 @@ class EmailService {
    * Send a 6-digit password reset OTP to the user's email
    */
   async sendPasswordResetOtpEmail(email: string, fullName: string, otp: string) {
+    const description = 'We received a request to reset your Sprinkl password. Enter the 6-digit code below to set your new password:';
     const html = this.renderCodeTemplate({
       title: 'Reset Your Password',
       subtitle: 'Host Account Security',
       fullName,
       code: otp,
-      description: 'We received a request to reset your Sprinkl password. Enter the 6-digit code below to set your new password:',
+      description,
+      expiryMinutes: 15,
+    });
+    const text = this.renderPlainTextCode({
+      fullName,
+      code: otp,
+      description,
       expiryMinutes: 15,
     });
 
@@ -187,8 +264,9 @@ class EmailService {
       const data = await this.resend.emails.send({
         from: this.fromEmail,
         to: email,
-        subject: `${otp} — Your Sprinkl Password Reset Code`,
+        subject: `[Sprinkl] Verification code: ${otp}`,
         html,
+        text,
       });
       return { success: true, data };
     } catch (err: any) {
