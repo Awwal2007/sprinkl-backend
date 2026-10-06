@@ -28,7 +28,7 @@ export class PayoutWorker {
     try {
       let payoutRef: string | undefined = undefined;
       let rawResponse: any = null;
-      let providerName: 'flutterwave' | 'tron' | 'bsc' = 'flutterwave';
+      let providerName: 'flutterwave' | 'nowpayments' | 'tron' | 'bsc' = 'flutterwave';
 
       if (claim.currency === 'NGN') {
         providerName = 'flutterwave';
@@ -57,7 +57,6 @@ export class PayoutWorker {
         rawResponse = res;
       } else if (claim.currency === 'USDT') {
         const chain = (claim.destination?.chain || giveaway.chain || 'TRC20') as 'TRC20' | 'BEP20';
-        providerName = chain === 'BEP20' ? 'bsc' : 'tron';
         const res = await cryptoService.sendUsdtPayout({
           destinationAddress: claim.destination?.walletAddress || '',
           amountUsdtInteger: claim.amount,
@@ -65,6 +64,7 @@ export class PayoutWorker {
           reference: claim.idempotencyKey,
         });
 
+        providerName = (res.provider as any) || (chain === 'BEP20' ? 'bsc' : 'tron');
         payoutRef = res.txHash;
         rawResponse = res;
       }
@@ -132,11 +132,10 @@ export class PayoutWorker {
       const lowerErr = cleanFailureReason.toLowerCase();
       if (
         lowerErr.includes('invalid_address') ||
-        lowerErr.includes('contract address') ||
-        lowerErr.includes('is a contract')
+        lowerErr.includes('invalid address')
       ) {
         cleanFailureReason =
-          'Exchange or contract address detected. Payout processors cannot send crypto to exchange deposit addresses (e.g. Binance, OKX, Bybit). Please retry using a personal self-custody wallet (e.g. Trust Wallet, MetaMask, TronLink).';
+          'Invalid wallet address. Please check your address format and ensure it matches the required USDT chain.';
       }
 
       claim.status = 'failed';

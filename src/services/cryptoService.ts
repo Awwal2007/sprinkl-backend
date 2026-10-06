@@ -133,6 +133,7 @@ export class CryptoService {
         amount: rawAmount,
         destination: toAddress,
         explorerUrl: `https://tronscan.org/#/transaction/${txId}`,
+        provider: 'tron' as const,
       };
     } catch (err: any) {
       const msg = err?.message || String(err);
@@ -213,6 +214,7 @@ export class CryptoService {
         amount: Number(microUnits), // Keep consistent with TRC20 (Sprinkl 6-decimal micro-units)
         destination: toAddress,
         explorerUrl: `https://bscscan.com/tx/${tx.hash}`,
+        provider: 'bsc' as const,
       };
     } catch (err: any) {
       const msg = err?.message || String(err);
@@ -262,6 +264,7 @@ export class CryptoService {
           amount: amountUsdtInteger,
           destination: destinationAddress,
           explorerUrl: res.explorerUrl,
+          provider: 'nowpayments' as const,
         };
       } catch (npErr: any) {
         console.warn(
