@@ -73,7 +73,9 @@ export const setupNgnDva = async (req: AuthRequest, res: Response, next: NextFun
       user.paystackDvaAccountNumber = dvaInfo.accountNumber;
       user.paystackDvaBankName = dvaInfo.bankName;
       user.paystackCustomerCode = dvaInfo.flwRef;
-      await user.save();
+      if (typeof user.save === 'function') {
+        await user.save();
+      }
     }
 
     return res.json({
@@ -179,15 +181,19 @@ export const getUsdtDepositAddress = async (req: AuthRequest, res: Response, nex
       });
     }
 
+    if (!user.cryptoDepositAddresses) {
+      user.cryptoDepositAddresses = [];
+    }
+
     // Persist so we have a record, but always override with the real env address
     const existing = user.cryptoDepositAddresses.find((a) => a.chain === chain);
     if (!existing) {
       user.cryptoDepositAddresses.push({ chain, address, createdAt: new Date() });
-      await user.save();
+      if (typeof user.save === 'function') await user.save();
     } else if (existing.address !== address) {
       // Update stale/fake cached address
       existing.address = address;
-      await user.save();
+      if (typeof user.save === 'function') await user.save();
     }
 
     return res.json({

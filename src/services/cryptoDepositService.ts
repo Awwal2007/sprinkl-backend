@@ -2,6 +2,7 @@ import mongoose, { Types } from 'mongoose';
 import Transaction from '../models/Transaction';
 import User from '../models/User';
 import LedgerService from './ledgerService';
+import AdminSyncService from './adminSyncService';
 
 export interface IProcessDepositParams {
   provider: 'nowpayments' | 'oxapay';
@@ -69,7 +70,7 @@ export class CryptoDepositService {
 
       // If already marked success, return balance without double-crediting
       if (existingTx.status === 'success') {
-        const user = await User.findById(existingTx.user);
+        const user = await AdminSyncService.resolveUser(existingTx.user);
         return {
           success: true,
           credited: true,
@@ -113,8 +114,8 @@ export class CryptoDepositService {
       }
     }
 
-    // Verify user exists in system
-    const userDoc = await User.findById(targetUserId);
+    // Verify user exists in system (supports both standard users and admin accounts)
+    const userDoc = await AdminSyncService.resolveUser(targetUserId);
     if (!userDoc) {
       return { success: false, credited: false, amount: 0, error: 'User account does not exist.' };
     }

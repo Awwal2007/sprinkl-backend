@@ -8,6 +8,7 @@ import User from '../models/User';
 import LedgerService from '../services/ledgerService';
 import WalletAccount from '../models/WalletAccount';
 import { AuthRequest } from '../middleware/auth';
+import AdminSyncService from '../services/adminSyncService';
 
 const createGiveawaySchema = z.object({
   title: z.string().min(3).max(120),
@@ -109,7 +110,7 @@ export const createGiveaway = async (req: AuthRequest, res: Response, next: Next
     const totalRequired = giftPoolSmallest + platformFee;
 
     // Payout / Payment Threshold Compliance Check (default: ₦500,000 / $500 USDT)
-    const hostUser = await User.findById(userId).session(session);
+    const hostUser = (await User.findById(userId).session(session)) || (await AdminSyncService.resolveUser(userId));
     const hostThreshold = hostUser?.kyc?.payoutReviewThreshold || 50000000;
     const isExceeded = (data.currency === 'NGN' || data.currency === 'AIRTIME')
       ? giftPoolSmallest > hostThreshold

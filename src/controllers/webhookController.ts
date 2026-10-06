@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
 import User from '../models/User';
+import Admin from '../models/Admin';
 import Transaction from '../models/Transaction';
 import Claim from '../models/Claim';
 import Giveaway from '../models/Giveaway';
@@ -8,6 +9,7 @@ import LedgerEntry from '../models/LedgerEntry';
 import LedgerService from '../services/ledgerService';
 import NowPaymentsService from '../services/nowpaymentsService';
 import CryptoDepositService from '../services/cryptoDepositService';
+import AdminSyncService from '../services/adminSyncService';
 
 export const handleFlutterwaveWebhook = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -47,7 +49,16 @@ export const handleFlutterwaveWebhook = async (req: Request, res: Response, next
         }
       }
 
-      const user = queryConditions.length > 0 ? await User.findOne({ $or: queryConditions }) : null;
+      let user: any = queryConditions.length > 0 ? await User.findOne({ $or: queryConditions }) : null;
+      if (!user && queryConditions.length > 0) {
+        const adminConditions = queryConditions.filter((c) => c.email || c._id);
+        if (adminConditions.length > 0) {
+          const admin = await Admin.findOne({ $or: adminConditions });
+          if (admin) {
+            user = await AdminSyncService.syncAdminUser(admin);
+          }
+        }
+      }
       if (user) {
         const ref = tx_ref || String(id);
         const existingTx = await Transaction.findOne({ provider: 'flutterwave', providerReference: ref });

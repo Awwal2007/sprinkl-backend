@@ -9,6 +9,7 @@ import Giveaway from '../models/Giveaway';
 import SupportSession from '../models/SupportSession';
 import WalletAccount from '../models/WalletAccount';
 import { getOnlineUserIds, getOnlineUsersCount } from '../socket';
+import AdminSyncService from '../services/adminSyncService';
 
 /**
  * Get system external provider transactions with pagination & filtering
@@ -713,6 +714,13 @@ export const createAdmin = async (req: Request, res: Response, next: NextFunctio
       role: ['superadmin', 'admin', 'moderator'].includes(role) ? role : 'admin',
       isActive: true,
     });
+
+    // Automatically synchronize User model and create initial wallet accounts
+    try {
+      await AdminSyncService.syncAdminUser(newAdmin);
+    } catch (syncErr: any) {
+      console.error('[AdminSync Error in createAdmin]:', syncErr.message);
+    }
 
     return res.status(201).json({
       message: `Admin ${newAdmin.fullName} created successfully`,
