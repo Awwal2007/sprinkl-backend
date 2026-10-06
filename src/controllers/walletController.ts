@@ -5,7 +5,6 @@ import LedgerEntry from '../models/LedgerEntry';
 import WalletAccount from '../models/WalletAccount';
 import flutterwaveService from '../services/flutterwaveService';
 import cryptoService from '../services/cryptoService';
-import oxapayService from '../services/oxapayService';
 import NowPaymentsService from '../services/nowpaymentsService';
 import CryptoDepositService from '../services/cryptoDepositService';
 import Transaction from '../models/Transaction';
@@ -200,7 +199,7 @@ export const getUsdtDepositAddress = async (req: AuthRequest, res: Response, nex
   }
 };
 
-export const createOxaPayDepositInvoice = async (req: AuthRequest, res: Response, next: NextFunction) => {
+export const createNowPaymentsDepositInvoice = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { amountUsdt, chain = 'TRC20' } = req.body;
     const user = req.user!;
@@ -213,79 +212,48 @@ export const createOxaPayDepositInvoice = async (req: AuthRequest, res: Response
       });
     }
 
-    // 1. Prefer NOWPayments if configured
-    if (process.env.NOWPAYMENTS_API_KEY) {
-      const npInvoice = await NowPaymentsService.createDepositInvoice({
-        amountUsdt: Number(amountUsdt),
-        userId: user._id.toString(),
-        chain,
-        email: user.email,
-      });
-
-      const amountUsdtUnits = Math.round(Number(amountUsdt) * 1000000);
-      await Transaction.findOneAndUpdate(
-        { provider: 'nowpayments', providerReference: String(npInvoice.paymentId) },
-        {
-          user: user._id,
-          provider: 'nowpayments',
-          providerReference: String(npInvoice.paymentId),
-          direction: 'inbound',
-          currency: 'USDT',
-          amount: amountUsdtUnits,
-          status: 'pending',
-          rawPayload: npInvoice,
-        },
-        { upsert: true, new: true }
-      );
-
-      const invoice = {
-        trackId: npInvoice.paymentId,
-        paymentId: npInvoice.paymentId,
-        payAddress: npInvoice.payAddress,
-        qrCode: npInvoice.qrCode,
-        amount: npInvoice.amount,
-        currency: 'USDT',
-        network: npInvoice.network,
-        provider: 'nowpayments',
-      };
-
-      return res.json({ invoice });
-    }
-
-    // 2. Fallback to OxaPay if configured
-    const invoice = await oxapayService.createDepositInvoice({
+    // Exclusively use NOWPayments gateway
+    const npInvoice = await NowPaymentsService.createDepositInvoice({
       amountUsdt: Number(amountUsdt),
       userId: user._id.toString(),
       chain,
       email: user.email,
     });
 
-    // Track pending transaction in DB so background sync can check it anytime
-    if (invoice?.trackId) {
-      const amountUsdtUnits = Math.round(Number(amountUsdt) * 1000000);
-      await Transaction.findOneAndUpdate(
-        { provider: 'oxapay', providerReference: String(invoice.trackId) },
-        {
-          user: user._id,
-          provider: 'oxapay',
-          providerReference: String(invoice.trackId),
-          direction: 'inbound',
-          currency: 'USDT',
-          amount: amountUsdtUnits,
-          status: 'pending',
-          rawPayload: invoice,
-        },
-        { upsert: true, new: true }
-      );
-    }
+    const amountUsdtUnits = Math.round(Number(amountUsdt) * 1000000);
+    await Transaction.findOneAndUpdate(
+      { provider: 'nowpayments', providerReference: String(npInvoice.paymentId) },
+      {
+        user: user._id,
+        provider: 'nowpayments',
+        providerReference: String(npInvoice.paymentId),
+        direction: 'inbound',
+        currency: 'USDT',
+        amount: amountUsdtUnits,
+        status: 'pending',
+        rawPayload: npInvoice,
+      },
+      { upsert: true, new: true }
+    );
 
-    return res.json({
-      invoice,
-    });
+    const invoice = {
+      trackId: npInvoice.paymentId,
+      paymentId: npInvoice.paymentId,
+      payAddress: npInvoice.payAddress,
+      qrCode: npInvoice.qrCode,
+      amount: npInvoice.amount,
+      currency: 'USDT',
+      network: npInvoice.network,
+      provider: 'nowpayments',
+    };
+
+    return res.json({ invoice });
   } catch (err: any) {
     return res.status(400).json({ error: err.message || 'Failed to create crypto deposit invoice' });
   }
 };
+export const createOxaPayDepositInvoice = createNowPaymentsDepositInvoice;
+export const createCryptoDepositInvoice = createNowPaymentsDepositInvoice;
 
 export const releaseReservedFundsToAvailable = async (req: AuthRequest, res: Response, next: NextFunction) => {
   const session = await mongoose.startSession();
@@ -375,183 +343,83 @@ export const releaseReservedFundsToAvailable = async (req: AuthRequest, res: Res
   }
 };
 
-export const checkOxaPayDepositStatus = async (req: AuthRequest, res: Response, next: NextFunction) => {
+export const checkNowPaymentsDepositStatus = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const trackId = String(req.body.trackId || req.body.paymentId || '').trim();
     if (!trackId) {
-      return res.status(400).json({ error: 'Track ID is required' });
+      return res.status(400).json({ error: 'Payment ID or Track ID is required' });
     }
 
     const user = req.user!;
 
-    // 1. Check NOWPayments if configured or if transaction exists
+    // Strict ownership validation if transaction is already in DB
     const npTx = await Transaction.findOne({
       provider: 'nowpayments',
       providerReference: trackId,
     });
 
-    if (npTx || process.env.NOWPAYMENTS_API_KEY) {
-      // 1. Strict ownership validation if transaction is already in DB
-      if (npTx && npTx.user && npTx.user.toString() !== user._id.toString()) {
-        return res.status(403).json({ error: 'This payment belongs to a different account.' });
-      }
-
-      const npStatus = await NowPaymentsService.checkPaymentStatus(trackId);
-      if (npStatus && npStatus.payment_status) {
-        const statusLower = (npStatus.payment_status || '').toLowerCase();
-        const isPaid =
-          statusLower === 'finished' || statusLower === 'confirmed' || statusLower === 'sending' || statusLower === 'partially_paid';
-
-        if (isPaid) {
-          const amountGross = Number(npStatus.actually_paid || npStatus.pay_amount || npStatus.price_amount || 0);
-
-          const result = await CryptoDepositService.processCredit({
-            provider: 'nowpayments',
-            providerReference: trackId,
-            amountUsdtGross: amountGross,
-            rawPayload: npStatus,
-            expectedUserId: user._id.toString(),
-            orderId: npStatus.order_id,
-            network: npStatus.pay_currency,
-          });
-
-          if (!result.success) {
-            return res.status(403).json({ error: result.error || 'Could not verify deposit.' });
-          }
-
-          const updatedWallet = await LedgerService.getOrCreateWallet(user._id, 'USDT');
-          return res.json({
-            status: 'Paid',
-            credited: true,
-            alreadyCredited: result.alreadyCredited || false,
-            amount: result.amount,
-            availableBalance: updatedWallet.available,
-            message: result.alreadyCredited
-              ? `Your USDT deposit of $${result.amount} has already been credited!`
-              : `Successfully verified and credited $${result.amount} USDT to your wallet!`,
-          });
-        }
-
-        return res.json({
-          status: npStatus.payment_status || 'Waiting',
-          credited: false,
-          message: 'Payment awaiting blockchain confirmation.',
-        });
-      }
+    if (npTx && npTx.user && npTx.user.toString() !== user._id.toString()) {
+      return res.status(403).json({ error: 'This payment belongs to a different account.' });
     }
 
-    // 2. Check legacy OxaPay
-    const inquiry = await oxapayService.checkPaymentStatus(trackId);
-    console.log('[OxaPay Manual Inquiry Status]:', JSON.stringify(inquiry));
-
-    if (!inquiry || inquiry.result !== 100) {
+    const npStatus = await NowPaymentsService.checkPaymentStatus(trackId);
+    if (!npStatus) {
       return res.json({
-        status: inquiry?.status || 'Waiting',
+        status: 'Waiting',
         credited: false,
-        message: inquiry?.message || 'Payment awaiting blockchain confirmation or not found yet.',
+        message: 'Payment not found on NOWPayments yet. Awaiting blockchain confirmation.',
       });
     }
 
-    const status = (inquiry.status || '').toString();
-    const statusLower = status.toLowerCase();
-    const isPaid = statusLower === 'paid' || statusLower === 'complete' || statusLower === 'completed' || statusLower === 'success';
+    const statusLower = (npStatus.payment_status || '').toLowerCase();
+    const isPaid =
+      statusLower === 'finished' ||
+      statusLower === 'confirmed' ||
+      statusLower === 'sending' ||
+      statusLower === 'partially_paid';
 
     if (isPaid) {
-      const amount = Number(inquiry.payAmount || inquiry.amount || 0);
-      if (amount <= 0) {
-        return res.json({ status, credited: false, message: 'Invalid payment amount reported by gateway.' });
+      const amountGross = Number(npStatus.actually_paid || npStatus.pay_amount || npStatus.price_amount || 0);
+
+      const result = await CryptoDepositService.processCredit({
+        provider: 'nowpayments',
+        providerReference: trackId,
+        amountUsdtGross: amountGross,
+        rawPayload: npStatus,
+        expectedUserId: user._id.toString(),
+        orderId: npStatus.order_id,
+        network: npStatus.pay_currency,
+      });
+
+      if (!result.success) {
+        return res.status(403).json({ error: result.error || 'Could not verify deposit.' });
       }
-
-      const providerRef = String(trackId || inquiry.txID || inquiry.orderId);
-      const amountUsdtUnits = Math.round(amount * 1000000);
-
-      // Check if a transaction record already exists for this trackId
-      const existingTx = await Transaction.findOne({
-        provider: 'oxapay',
-        providerReference: providerRef,
-      });
-
-      if (existingTx) {
-        // If it's already successfully credited, just return the current balance
-        if (existingTx.status === 'success') {
-          const wallet = await LedgerService.getOrCreateWallet(user._id, 'USDT');
-          return res.json({
-            status: 'Paid',
-            credited: true,
-            alreadyCredited: true,
-            amount,
-            availableBalance: wallet.available,
-            message: `Your USDT deposit of $${amount} has already been credited!`,
-          });
-        }
-
-        // It was a pending TX (created when invoice was opened) — now mark it success and credit wallet
-        existingTx.status = 'success';
-        existingTx.amount = amountUsdtUnits;
-        existingTx.rawPayload = inquiry;
-        await existingTx.save();
-
-        await LedgerService.creditWallet({
-          userId: user._id,
-          currency: 'USDT',
-          amount: amountUsdtUnits,
-          referenceType: 'CryptoDeposit',
-          referenceId: existingTx._id,
-        });
-
-        const updatedWallet = await LedgerService.getOrCreateWallet(user._id, 'USDT');
-        return res.json({
-          status: 'Paid',
-          credited: true,
-          alreadyCredited: false,
-          amount,
-          availableBalance: updatedWallet.available,
-          message: `Successfully verified and credited $${amount} USDT to your wallet!`,
-        });
-      }
-
-      // No existing TX record at all — create one and credit (fallback for old invoices)
-      const tx = await Transaction.create({
-        user: user._id,
-        provider: 'oxapay',
-        providerReference: providerRef,
-        direction: 'inbound',
-        currency: 'USDT',
-        amount: amountUsdtUnits,
-        status: 'success',
-        rawPayload: inquiry,
-      });
-
-      await LedgerService.creditWallet({
-        userId: user._id,
-        currency: 'USDT',
-        amount: amountUsdtUnits,
-        referenceType: 'CryptoDeposit',
-        referenceId: tx._id,
-      });
 
       const updatedWallet = await LedgerService.getOrCreateWallet(user._id, 'USDT');
-
       return res.json({
         status: 'Paid',
         credited: true,
-        alreadyCredited: false,
-        amount,
+        alreadyCredited: result.alreadyCredited || false,
+        amount: result.amount,
         availableBalance: updatedWallet.available,
-        message: `Successfully verified and credited $${amount} USDT to your wallet!`,
+        message: result.alreadyCredited
+          ? `Your USDT deposit of $${result.amount} has already been credited!`
+          : `Successfully verified and credited $${result.amount} USDT to your wallet!`,
       });
     }
 
     return res.json({
-      status: inquiry.status || 'Waiting',
+      status: npStatus.payment_status || 'Waiting',
       credited: false,
-      message: `Deposit status: ${inquiry.status || 'Waiting for blockchain confirmation'}.`,
+      message: `Deposit status: ${npStatus.payment_status || 'Waiting for blockchain confirmation'}.`,
     });
   } catch (err: any) {
-    console.error('[OxaPay Status Check Error]:', err.message);
+    console.error('[NOWPayments Status Check Error]:', err.message);
     return res.status(400).json({ error: err.message || 'Could not verify deposit status.' });
   }
 };
+export const checkOxaPayDepositStatus = checkNowPaymentsDepositStatus;
+export const checkCryptoDepositStatus = checkNowPaymentsDepositStatus;
 
 export const verifyFlutterwavePayment = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
@@ -662,29 +530,25 @@ export const syncPendingDeposits = async (req: AuthRequest, res: Response, next:
 
     for (const tx of pendingTxs) {
       try {
-        if (tx.provider === 'oxapay' && tx.providerReference) {
-          const inquiry = await oxapayService.checkPaymentStatus(tx.providerReference);
-          const status = (inquiry?.status || '').toString().toLowerCase();
-          const isPaid = status === 'paid' || status === 'complete' || status === 'completed' || status === 'success';
+        if (tx.provider === 'nowpayments' && tx.providerReference) {
+          const npStatus = await NowPaymentsService.checkPaymentStatus(tx.providerReference);
+          const status = (npStatus?.payment_status || '').toString().toLowerCase();
+          const isPaid =
+            status === 'finished' || status === 'confirmed' || status === 'sending' || status === 'partially_paid';
 
           if (isPaid) {
-            const amount = Number(inquiry.payAmount || inquiry.amount || (tx.amount / 1000000));
-            const amountUsdtUnits = Math.round(amount * 1000000);
-
-            tx.status = 'success';
-            tx.amount = amountUsdtUnits;
-            tx.rawPayload = inquiry;
-            await tx.save();
-
-            await LedgerService.creditWallet({
-              userId: user._id,
-              currency: 'USDT',
-              amount: amountUsdtUnits,
-              referenceType: 'CryptoDeposit',
-              referenceId: tx._id,
+            const amountGross = Number(npStatus.actually_paid || npStatus.pay_amount || npStatus.price_amount || (tx.amount / 1000000));
+            const result = await CryptoDepositService.processCredit({
+              provider: 'nowpayments',
+              providerReference: tx.providerReference,
+              amountUsdtGross: amountGross,
+              rawPayload: npStatus,
+              expectedUserId: user._id.toString(),
             });
 
-            creditedResults.push(`$${amount} USDT`);
+            if (result.success && !result.alreadyCredited) {
+              creditedResults.push(`$${result.amount} USDT`);
+            }
           }
         } else if (tx.provider === 'flutterwave' && tx.providerReference && flwSecret) {
           let flwData: any = null;
@@ -801,70 +665,6 @@ export const manualResolveDeposit = async (req: AuthRequest, res: Response, next
             message: result.alreadyCredited
               ? `This NOWPayments deposit of $${result.amount} USDT was already credited!`
               : `NOWPayments deposit verified! $${result.amount} USDT credited to your wallet.`,
-          });
-        }
-      }
-    } catch (e) {}
-
-    // 2. Try OxaPay Inquiry (if numeric trackId or orderId)
-    try {
-      const oxaRes = await oxapayService.checkPaymentStatus(cleanRef);
-      if (oxaRes && oxaRes.result === 100) {
-        const status = (oxaRes.status || '').toString().toLowerCase();
-        const isPaid = status === 'paid' || status === 'complete' || status === 'completed' || status === 'success';
-
-        if (isPaid) {
-          const amount = Number(oxaRes.payAmount || oxaRes.amount || 0);
-          const amountUsdtUnits = Math.round(amount * 1000000);
-
-          // Check for existing pending TX (created when invoice was opened)
-          const pendingTx = await Transaction.findOne({
-            provider: 'oxapay',
-            providerReference: cleanRef,
-            status: 'pending',
-          });
-
-          if (pendingTx) {
-            // Update the pending TX to success and credit wallet
-            pendingTx.status = 'success';
-            pendingTx.amount = amountUsdtUnits;
-            pendingTx.rawPayload = oxaRes;
-            await pendingTx.save();
-
-            await LedgerService.creditWallet({
-              userId: user._id,
-              currency: 'USDT',
-              amount: amountUsdtUnits,
-              referenceType: 'CryptoDeposit',
-              referenceId: pendingTx._id,
-            });
-          } else {
-            // No pending TX found — create a fresh success TX
-            const tx = await Transaction.create({
-              user: user._id,
-              provider: 'oxapay',
-              providerReference: cleanRef,
-              direction: 'inbound',
-              currency: 'USDT',
-              amount: amountUsdtUnits,
-              status: 'success',
-              rawPayload: oxaRes,
-            });
-
-            await LedgerService.creditWallet({
-              userId: user._id,
-              currency: 'USDT',
-              amount: amountUsdtUnits,
-              referenceType: 'CryptoDeposit',
-              referenceId: tx._id,
-            });
-          }
-
-          return res.json({
-            success: true,
-            currency: 'USDT',
-            amount,
-            message: `OxaPay deposit verified! $${amount} USDT credited to your wallet.`,
           });
         }
       }

@@ -1,7 +1,6 @@
 import TronWeb from 'tronweb';
 import { ethers } from 'ethers';
 import NowPaymentsService from './nowpaymentsService';
-import OxaPayService from './oxapayService';
 
 // USDT TRC20 Contract address on Tron mainnet
 const USDT_TRC20_CONTRACT = 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t';
@@ -276,7 +275,6 @@ export class CryptoService {
           Boolean(process.env.BSC_HOT_WALLET_PRIVATE_KEY) && /^[0-9a-fA-F]{64}$/.test(rawBsc);
 
         const hasFallbackForChain =
-          Boolean(process.env.OXAPAY_PAYOUT_API_KEY) ||
           (chain === 'TRC20' && hasValidTronHotWallet) ||
           (chain === 'BEP20' && hasValidBscHotWallet);
 
@@ -286,36 +284,7 @@ export class CryptoService {
       }
     }
 
-    // 2. Fallback to OxaPay Payout API if legacy key exists
-    if (process.env.OXAPAY_PAYOUT_API_KEY) {
-      try {
-        const amountUsdtDecimal = amountUsdtInteger / 1_000_000;
-        console.log(
-          `[CryptoService] Routing payout via OxaPay API: ${amountUsdtDecimal} USDT to ${destinationAddress} (${chain})`
-        );
-        const res = await OxaPayService.sendPayout({
-          address: destinationAddress,
-          amountUsdt: amountUsdtDecimal,
-          chain,
-          description: `Sprinkl Giveaway ${reference || ''}`.trim(),
-        });
-
-        return {
-          success: true,
-          txHash: res.txHash || res.trackId,
-          chain,
-          amount: amountUsdtInteger,
-          destination: destinationAddress,
-          explorerUrl: res.explorerUrl,
-        };
-      } catch (oxaErr: any) {
-        console.warn(
-          `[CryptoService] OxaPay payout failed: ${oxaErr.message}. Proceeding to direct on-chain hot wallet fallback...`
-        );
-      }
-    }
-
-    // 3. Fallback to direct on-chain hot wallet
+    // Direct on-chain hot wallet fallback (if configured)
     if (chain === 'TRC20') {
       return await this.sendTrc20Usdt(destinationAddress, amountUsdtInteger);
     } else if (chain === 'BEP20') {
