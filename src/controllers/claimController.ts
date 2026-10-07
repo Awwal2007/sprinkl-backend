@@ -2,6 +2,8 @@ import { Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import Giveaway from '../models/Giveaway';
 import Claim from '../models/Claim';
+import User from '../models/User';
+import Admin from '../models/Admin';
 import flutterwaveService from '../services/flutterwaveService';
 import cryptoService from '../services/cryptoService';
 import PayoutWorker from '../jobs/payoutWorker';
@@ -40,13 +42,16 @@ export const detectCarrier = (phone: string): 'MTN' | 'AIRTEL' | 'GLO' | '9MOBIL
 
 export const getPublicGiveaway = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const giveaway = await Giveaway.findOne({ slug: req.params.slug }).populate(
-      'host',
-      'fullName email'
-    );
+    const giveaway = await Giveaway.findOne({ slug: req.params.slug });
 
     if (!giveaway) {
       return res.status(404).json({ error: 'Giveaway not found' });
+    }
+
+    let hostName = 'Sprinkl Host';
+    const hostDoc = (await User.findById(giveaway.host).select('fullName email')) || (await Admin.findById(giveaway.host).select('fullName email'));
+    if (hostDoc?.fullName) {
+      hostName = hostDoc.fullName;
     }
 
     if (giveaway.expiresAt && new Date() > new Date(giveaway.expiresAt)) {
@@ -84,10 +89,10 @@ export const getPublicGiveaway = async (req: Request, res: Response, next: NextF
         isExpired: giveaway.status === 'expired',
         expiresAt: giveaway.expiresAt,
         settings: giveaway.settings,
-        hostName: (giveaway.host as any)?.fullName || 'Sprinkl Host',
+        hostName,
         seo: {
           title: `${giveaway.title} | Sprinkl`,
-          description: `Claim your share of ${giveaway.currency} from ${(giveaway.host as any)?.fullName || 'Sprinkl Host'}`,
+          description: `Claim your share of ${giveaway.currency} from ${hostName}`,
           url: `${process.env.DOMAIN || 'https://sprinkl.biz'}/g/${giveaway.slug}`,
         },
       },

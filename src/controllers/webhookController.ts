@@ -50,13 +50,7 @@ export const handleFlutterwaveWebhook = async (req: Request, res: Response, next
 
       let user: any = queryConditions.length > 0 ? await User.findOne({ $or: queryConditions }) : null;
       if (!user && queryConditions.length > 0) {
-        const adminConditions = queryConditions.filter((c) => c.email || c._id);
-        if (adminConditions.length > 0) {
-          const admin = await Admin.findOne({ $or: adminConditions });
-          if (admin) {
-            user = admin;
-          }
-        }
+        user = await Admin.findOne({ $or: queryConditions });
       }
       if (user) {
         const ref = tx_ref || String(id);

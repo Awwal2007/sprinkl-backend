@@ -523,6 +523,7 @@ export const refreshToken = async (req: Request, res: Response, next: NextFuncti
 export const me = async (req: AuthRequest, res: Response) => {
   if (req.admin) {
     return res.json({
+      isAdmin: true,
       user: {
         id: req.admin._id,
         fullName: req.admin.fullName,
@@ -594,19 +595,29 @@ export const forgotPassword = async (req: Request, res: Response, next: NextFunc
       return res.status(400).json({ error: 'Email address is required' });
     }
 
-    // Always return the same message to avoid email enumeration
-    const user = await User.findOne({ email: email.toLowerCase() });
-    if (!user) {
+    const emailLower = email.toLowerCase().trim();
+
+    // 1. Check Admin model first
+    const admin = await Admin.findOne({ email: emailLower });
+    if (admin) {
+      const otp = Math.floor(100000 + Math.random() * 900000).toString();
+      admin.passwordResetToken = await bcrypt.hash(otp, 10);
+      admin.passwordResetExpires = new Date(Date.now() + 15 * 60 * 1000);
+      await admin.save();
+      await emailService.sendPasswordResetOtpEmail(admin.email, admin.fullName, otp);
       return res.json({ message: 'If that email is registered, a reset code has been sent.' });
     }
 
-    const otp = Math.floor(100000 + Math.random() * 900000).toString(); // 6-digit code
-    const otpHash = await bcrypt.hash(otp, 10);
-    user.passwordResetToken = otpHash;
-    user.passwordResetExpires = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
-    await user.save();
-
-    await emailService.sendPasswordResetOtpEmail(user.email, user.fullName, otp);
+    // 2. Otherwise check User model
+    const user = await User.findOne({ email: emailLower });
+    if (user) {
+      const otp = Math.floor(100000 + Math.random() * 900000).toString();
+      user.passwordResetToken = await bcrypt.hash(otp, 10);
+      user.passwordResetExpires = new Date(Date.now() + 15 * 60 * 1000);
+      await user.save();
+      await emailService.sendPasswordResetOtpEmail(user.email, user.fullName, otp);
+      return res.json({ message: 'If that email is registered, a reset code has been sent.' });
+    }
 
     return res.json({ message: 'If that email is registered, a reset code has been sent.' });
   } catch (err) {
@@ -624,25 +635,41 @@ export const verifyResetCode = async (req: Request, res: Response, next: NextFun
       return res.status(400).json({ error: 'Email and reset code are required' });
     }
 
-    const user = await User.findOne({
-      email: email.toLowerCase(),
+    const emailLower = email.toLowerCase().trim();
+
+    // 1. Check Admin model first
+    const admin = await Admin.findOne({
+      email: emailLower,
       passwordResetExpires: { $gt: new Date() },
     }).select('+passwordResetToken +passwordResetExpires');
 
-    if (!user || !user.passwordResetToken) {
-      return res.status(400).json({ error: 'Reset code is invalid or has expired' });
+    if (admin && admin.passwordResetToken) {
+      const isMatch = await bcrypt.compare(code, admin.passwordResetToken);
+      if (!isMatch) {
+        return res.status(400).json({ error: 'Incorrect reset code. Please try again.' });
+      }
+      const accessSecret = process.env.JWT_ACCESS_SECRET || 'givehub_jwt_access_secret_sprinkl_2026_super_key';
+      const resetSessionToken = jwt.sign({ userId: admin._id, isAdmin: true, purpose: 'password_reset' }, accessSecret, { expiresIn: '10m' });
+      return res.json({ resetSessionToken, message: 'Code verified. You may now set a new password.' });
     }
 
-    const isMatch = await bcrypt.compare(code, user.passwordResetToken);
-    if (!isMatch) {
-      return res.status(400).json({ error: 'Incorrect reset code. Please try again.' });
+    // 2. Otherwise check User model
+    const user = await User.findOne({
+      email: emailLower,
+      passwordResetExpires: { $gt: new Date() },
+    }).select('+passwordResetToken +passwordResetExpires');
+
+    if (user && user.passwordResetToken) {
+      const isMatch = await bcrypt.compare(code, user.passwordResetToken);
+      if (!isMatch) {
+        return res.status(400).json({ error: 'Incorrect reset code. Please try again.' });
+      }
+      const accessSecret = process.env.JWT_ACCESS_SECRET || 'givehub_jwt_access_secret_sprinkl_2026_super_key';
+      const resetSessionToken = jwt.sign({ userId: user._id, purpose: 'password_reset' }, accessSecret, { expiresIn: '10m' });
+      return res.json({ resetSessionToken, message: 'Code verified. You may now set a new password.' });
     }
 
-    // Issue a short-lived signed token the client can use for the final step
-    const accessSecret = process.env.JWT_ACCESS_SECRET || 'givehub_jwt_access_secret_sprinkl_2026_super_key';
-    const resetSessionToken = jwt.sign({ userId: user._id, purpose: 'password_reset' }, accessSecret, { expiresIn: '10m' });
-
-    return res.json({ resetSessionToken, message: 'Code verified. You may now set a new password.' });
+    return res.status(400).json({ error: 'Reset code is invalid or has expired' });
   } catch (err) {
     next(err);
   }
@@ -673,18 +700,29 @@ export const resetPassword = async (req: Request, res: Response, next: NextFunct
       return res.status(400).json({ error: 'Invalid reset token' });
     }
 
-    const user = await User.findById(decoded.userId).select('+passwordResetToken +passwordResetExpires');
-    if (!user) {
-      return res.status(404).json({ error: 'Account not found' });
+    // 1. Check Admin model first
+    const admin = await Admin.findById(decoded.userId).select('+passwordResetToken +passwordResetExpires');
+    if (admin) {
+      admin.passwordHash = await bcrypt.hash(newPassword, 10);
+      admin.passwordResetToken = undefined;
+      admin.passwordResetExpires = undefined;
+      admin.refreshTokenHash = undefined; // invalidate all sessions
+      await admin.save();
+      return res.json({ message: 'Password reset successfully. You can now sign in with your new password.' });
     }
 
-    user.passwordHash = await bcrypt.hash(newPassword, 10);
-    user.passwordResetToken = undefined;
-    user.passwordResetExpires = undefined;
-    user.refreshTokenHash = undefined; // invalidate all sessions
-    await user.save();
+    // 2. Otherwise check User model
+    const user = await User.findById(decoded.userId).select('+passwordResetToken +passwordResetExpires');
+    if (user) {
+      user.passwordHash = await bcrypt.hash(newPassword, 10);
+      user.passwordResetToken = undefined;
+      user.passwordResetExpires = undefined;
+      user.refreshTokenHash = undefined; // invalidate all sessions
+      await user.save();
+      return res.json({ message: 'Password reset successfully. You can now sign in with your new password.' });
+    }
 
-    return res.json({ message: 'Password reset successfully. You can now sign in with your new password.' });
+    return res.status(404).json({ error: 'Account not found' });
   } catch (err) {
     next(err);
   }

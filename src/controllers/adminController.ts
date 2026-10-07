@@ -123,8 +123,8 @@ export const getOverviewReport = async (req: Request, res: Response, next: NextF
     const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
-    const totalUsers = await User.countDocuments({ role: { $ne: 'admin' } });
-    const verifiedUsers = await User.countDocuments({ emailVerified: true, role: { $ne: 'admin' } });
+    const totalUsers = await User.countDocuments();
+    const verifiedUsers = await User.countDocuments({ emailVerified: true });
     const hostUsers = await User.countDocuments({ role: 'host' });
 
     // Total administrators in dedicated Admin model
@@ -134,7 +134,6 @@ export const getOverviewReport = async (req: Request, res: Response, next: NextF
     const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000);
     const onlineIds = getOnlineUserIds();
     const activeNow = await User.countDocuments({
-      role: { $ne: 'admin' },
       $or: [
         { _id: { $in: onlineIds } },
         { isOnline: true, lastActiveAt: { $gte: twoMinutesAgo } },
@@ -142,12 +141,10 @@ export const getOverviewReport = async (req: Request, res: Response, next: NextF
     });
 
     const activeToday = await User.countDocuments({
-      role: { $ne: 'admin' },
       lastActiveAt: { $gte: twentyFourHoursAgo },
     });
 
     const activeThisWeek = await User.countDocuments({
-      role: { $ne: 'admin' },
       lastActiveAt: { $gte: sevenDaysAgo },
     });
 
@@ -420,23 +417,65 @@ export const updateUserRole = async (req: Request, res: Response, next: NextFunc
       return res.status(400).json({ error: 'Role must be host or admin' });
     }
 
-    const user = await User.findById(userId);
+    const user = await User.findById(userId).select('+passwordHash');
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    user.role = role;
-    await user.save();
+    if (role === 'admin') {
+      // Create or activate administrator in dedicated Admin model
+      let admin = await Admin.findOne({ email: user.email });
+      if (!admin) {
+        admin = await Admin.create({
+          fullName: user.fullName,
+          email: user.email,
+          phone: user.phone,
+          passwordHash: user.passwordHash,
+          role: 'admin',
+          isActive: true,
+          cryptoDepositAddresses: user.cryptoDepositAddresses || [],
+          paystackCustomerCode: user.paystackCustomerCode,
+          paystackDvaAccountNumber: user.paystackDvaAccountNumber,
+          paystackDvaBankName: user.paystackDvaBankName,
+        });
+      } else {
+        admin.isActive = true;
+        await admin.save();
+      }
 
-    return res.json({
-      message: `User ${user.fullName} role updated to ${role}`,
-      user: {
-        _id: user._id,
-        fullName: user.fullName,
-        email: user.email,
-        role: user.role,
-      },
-    });
+      // Initialize wallets for the admin account
+      for (const currency of ['NGN', 'USDT'] as const) {
+        await WalletAccount.findOneAndUpdate(
+          { user: admin._id, currency },
+          { user: admin._id, currency, available: 0, reserved: 0 },
+          { upsert: true }
+        ).catch(() => {});
+      }
+
+      return res.json({
+        message: `User ${user.fullName} has been granted administrator access in the Admin model.`,
+        user: {
+          _id: user._id,
+          fullName: user.fullName,
+          email: user.email,
+          role: 'host',
+          isAdmin: true,
+        },
+      });
+    } else {
+      // Demote: deactivate from Admin model
+      await Admin.updateMany({ email: user.email }, { isActive: false });
+      return res.json({
+        message: `Admin access revoked for ${user.fullName}.`,
+        user: {
+          _id: user._id,
+          fullName: user.fullName,
+          email: user.email,
+          role: 'host',
+          isAdmin: false,
+        },
+      });
+    }
   } catch (err) {
     next(err);
   }
@@ -624,7 +663,6 @@ export const getActiveUsers = async (req: Request, res: Response, next: NextFunc
         { _id: { $in: onlineIds } },
         { isOnline: true, lastActiveAt: { $gte: twoMinutesAgo } },
       ],
-      role: { $ne: 'admin' },
     })
       .select('fullName email phone role lastActiveAt isOnline knownLocations emailVerified createdAt')
       .sort({ lastActiveAt: -1 })
@@ -635,12 +673,10 @@ export const getActiveUsers = async (req: Request, res: Response, next: NextFunc
         { _id: { $in: onlineIds } },
         { isOnline: true, lastActiveAt: { $gte: twoMinutesAgo } },
       ],
-      role: { $ne: 'admin' },
     });
 
     const activeTodayCount = await User.countDocuments({
       lastActiveAt: { $gte: twentyFourHoursAgo },
-      role: { $ne: 'admin' },
     });
 
     return res.json({

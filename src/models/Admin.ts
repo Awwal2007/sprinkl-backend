@@ -23,6 +23,8 @@ export interface IAdmin extends Document {
     payoutReviewThreshold: number;
   };
   isOnline?: boolean;
+  passwordResetToken?: string;
+  passwordResetExpires?: Date;
   loginOtpHash?: string;
   loginOtpExpires?: Date;
   lastLoginAt?: Date;
@@ -84,6 +86,14 @@ const adminSchema = new Schema<IAdmin>(
     isOnline: {
       type: Boolean,
       default: false,
+    },
+    passwordResetToken: {
+      type: String,
+      select: false,
+    },
+    passwordResetExpires: {
+      type: Date,
+      select: false,
     },
     loginOtpHash: {
       type: String,

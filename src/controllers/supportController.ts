@@ -491,7 +491,7 @@ export const adminReplySupportSession = async (req: any, res: Response, next: Ne
   try {
     const { sessionId } = req.params;
     const { text } = req.body;
-    const adminUser = req.user;
+    const adminUser = req.admin || req.user;
 
     if (!text || !text.trim()) {
       return res.status(400).json({ error: 'Reply text cannot be empty' });

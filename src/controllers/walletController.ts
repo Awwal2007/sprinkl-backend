@@ -268,7 +268,8 @@ export const releaseReservedFundsToAvailable = async (req: AuthRequest, res: Res
 
   try {
     const currency = (req.body.currency || 'NGN').toUpperCase() as 'NGN' | 'USDT';
-    const userId = req.user!._id;
+    const actor: any = req.admin || req.user!;
+    const userId = actor._id;
 
     // 1. Only find CANCELLED giveaways for this user in this currency that haven't released funds yet
     const cancelledGiveaways = await Giveaway.find({

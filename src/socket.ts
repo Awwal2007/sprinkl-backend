@@ -2,6 +2,7 @@ import { Server as SocketIOServer, Socket } from 'socket.io';
 import { Server as HttpServer } from 'http';
 import jwt from 'jsonwebtoken';
 import User from './models/User';
+import Admin from './models/Admin';
 
 let io: SocketIOServer;
 
@@ -86,6 +87,10 @@ export function initSocket(httpServer: HttpServer): SocketIOServer {
               isOnline: true,
               lastActiveAt: new Date(),
             });
+            await Admin.findByIdAndUpdate(identifiedUserId, {
+              isOnline: true,
+              lastActiveAt: new Date(),
+            });
           } catch {
             // Safe to ignore DB error on socket hook
           }
@@ -110,6 +115,10 @@ export function initSocket(httpServer: HttpServer): SocketIOServer {
         conn.lastPing = new Date();
         if (conn.userId) {
           User.findByIdAndUpdate(conn.userId, {
+            isOnline: true,
+            lastActiveAt: new Date(),
+          }).catch(() => {});
+          Admin.findByIdAndUpdate(conn.userId, {
             isOnline: true,
             lastActiveAt: new Date(),
           }).catch(() => {});
@@ -166,9 +175,13 @@ export function initSocket(httpServer: HttpServer): SocketIOServer {
         sockets.delete(socket.id);
         if (sockets.size === 0) {
           userSocketMap.delete(userId);
-          // Mark user as offline in database
+          // Mark user or admin as offline in database
           try {
             await User.findByIdAndUpdate(userId, {
+              isOnline: false,
+              lastActiveAt: new Date(),
+            });
+            await Admin.findByIdAndUpdate(userId, {
               isOnline: false,
               lastActiveAt: new Date(),
             });
