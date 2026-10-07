@@ -9,7 +9,6 @@ import LedgerEntry from '../models/LedgerEntry';
 import LedgerService from '../services/ledgerService';
 import NowPaymentsService from '../services/nowpaymentsService';
 import CryptoDepositService from '../services/cryptoDepositService';
-import AdminSyncService from '../services/adminSyncService';
 
 export const handleFlutterwaveWebhook = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -55,7 +54,7 @@ export const handleFlutterwaveWebhook = async (req: Request, res: Response, next
         if (adminConditions.length > 0) {
           const admin = await Admin.findOne({ $or: adminConditions });
           if (admin) {
-            user = await AdminSyncService.syncAdminUser(admin);
+            user = admin;
           }
         }
       }

@@ -2,7 +2,6 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import User, { IUser } from '../models/User';
 import Admin, { IAdmin } from '../models/Admin';
-import AdminSyncService from '../services/adminSyncService';
 
 export interface AuthRequest extends Request {
   user?: IUser;
@@ -49,21 +48,8 @@ export const authenticateToken = async (req: AuthRequest, res: Response, next: N
       Admin.findByIdAndUpdate(admin._id, { lastActiveAt: new Date() }).catch(() => {});
 
       req.admin = admin;
-      // Fully sync & map to standard Mongoose User document for seamless wallet/giveaway features
-      try {
-        req.user = await AdminSyncService.syncAdminUser(admin);
-      } catch (syncErr: any) {
-        console.error('[AdminSync Error in auth middleware]:', syncErr.message);
-        req.user = {
-          _id: admin._id,
-          fullName: admin.fullName,
-          email: admin.email,
-          role: 'admin',
-          emailVerified: true,
-          cryptoDepositAddresses: [],
-          save: async () => {},
-        } as any;
-      }
+      // Admin model directly satisfies user-facing wallet/giveaway features without touching User model
+      req.user = admin as any;
       return next();
     }
 
@@ -120,19 +106,7 @@ export const optionalAuth = async (req: AuthRequest, res: Response, next: NextFu
       const admin = await Admin.findById(decoded.userId);
       if (admin && admin.isActive) {
         req.admin = admin;
-        try {
-          req.user = await AdminSyncService.syncAdminUser(admin);
-        } catch {
-          req.user = {
-            _id: admin._id,
-            fullName: admin.fullName,
-            email: admin.email,
-            role: 'admin',
-            emailVerified: true,
-            cryptoDepositAddresses: [],
-            save: async () => {},
-          } as any;
-        }
+        req.user = admin as any;
         return next();
       }
 
@@ -148,7 +122,7 @@ export const optionalAuth = async (req: AuthRequest, res: Response, next: NextFu
 };
 
 export const requireAdmin = (req: AuthRequest, res: Response, next: NextFunction) => {
-  if (req.admin || (req.user && req.user.role === 'admin')) {
+  if (req.admin) {
     return next();
   }
   return res.status(403).json({ error: 'Admin privilege required' });

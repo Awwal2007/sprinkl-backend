@@ -9,7 +9,6 @@ import Giveaway from '../models/Giveaway';
 import SupportSession from '../models/SupportSession';
 import WalletAccount from '../models/WalletAccount';
 import { getOnlineUserIds, getOnlineUsersCount } from '../socket';
-import AdminSyncService from '../services/adminSyncService';
 
 /**
  * Get system external provider transactions with pagination & filtering
@@ -128,10 +127,8 @@ export const getOverviewReport = async (req: Request, res: Response, next: NextF
     const verifiedUsers = await User.countDocuments({ emailVerified: true, role: { $ne: 'admin' } });
     const hostUsers = await User.countDocuments({ role: 'host' });
 
-    // Count admins from dedicated Admin model + legacy admin user records
-    const dedicatedAdminCount = await Admin.countDocuments({ isActive: true });
-    const legacyAdminUsers = await User.countDocuments({ role: 'admin' });
-    const totalAdmins = dedicatedAdminCount || legacyAdminUsers;
+    // Total administrators in dedicated Admin model
+    const totalAdmins = await Admin.countDocuments({ isActive: true });
 
     // Real-time active users calculations (strict 2-minute active threshold + live socket connections)
     const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000);
@@ -672,13 +669,9 @@ export const getAdmins = async (req: Request, res: Response, next: NextFunction)
   try {
     const admins = await Admin.find().select('-passwordHash').sort({ createdAt: -1 });
 
-    // Also include legacy admin users from User collection if any exist
-    const legacyAdminUsers = await User.find({ role: 'admin' }).select('-passwordHash');
-
     return res.json({
       admins,
-      legacyAdminUsers,
-      total: admins.length + legacyAdminUsers.length,
+      total: admins.length,
     });
   } catch (err) {
     next(err);
@@ -713,13 +706,16 @@ export const createAdmin = async (req: Request, res: Response, next: NextFunctio
       passwordHash,
       role: ['superadmin', 'admin', 'moderator'].includes(role) ? role : 'admin',
       isActive: true,
+      cryptoDepositAddresses: [],
     });
 
-    // Automatically synchronize User model and create initial wallet accounts
-    try {
-      await AdminSyncService.syncAdminUser(newAdmin);
-    } catch (syncErr: any) {
-      console.error('[AdminSync Error in createAdmin]:', syncErr.message);
+    // Initialize NGN & USDT wallet accounts for the new administrator
+    for (const currency of ['NGN', 'USDT'] as const) {
+      await WalletAccount.findOneAndUpdate(
+        { user: newAdmin._id, currency },
+        { user: newAdmin._id, currency, available: 0, reserved: 0 },
+        { upsert: true }
+      ).catch(() => {});
     }
 
     return res.status(201).json({

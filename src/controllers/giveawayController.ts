@@ -5,10 +5,10 @@ import { z } from 'zod';
 import Giveaway from '../models/Giveaway';
 import Claim from '../models/Claim';
 import User from '../models/User';
+import Admin from '../models/Admin';
 import LedgerService from '../services/ledgerService';
 import WalletAccount from '../models/WalletAccount';
 import { AuthRequest } from '../middleware/auth';
-import AdminSyncService from '../services/adminSyncService';
 
 const createGiveawaySchema = z.object({
   title: z.string().min(3).max(120),
@@ -45,7 +45,7 @@ export const createGiveaway = async (req: AuthRequest, res: Response, next: Next
 
     // A. Minimum Amount Per Winner Check
     // Admins have a lower floor (₦100 NGN / $0.10 USDT) for testing & flexibility. Airtime min is ₦50.
-    const isAdmin = (req.user as any)?.role === 'admin';
+    const isAdmin = Boolean(req.admin);
     const ngnMin = isAdmin ? 100 : 300;
     const usdtMin = isAdmin ? 0.1 : 0.2;
 
@@ -110,7 +110,7 @@ export const createGiveaway = async (req: AuthRequest, res: Response, next: Next
     const totalRequired = giftPoolSmallest + platformFee;
 
     // Payout / Payment Threshold Compliance Check (default: ₦500,000 / $500 USDT)
-    const hostUser = (await User.findById(userId).session(session)) || (await AdminSyncService.resolveUser(userId));
+    const hostUser = (await User.findById(userId).session(session)) || (await Admin.findById(userId).session(session));
     const hostThreshold = hostUser?.kyc?.payoutReviewThreshold || 50000000;
     const isExceeded = (data.currency === 'NGN' || data.currency === 'AIRTIME')
       ? giftPoolSmallest > hostThreshold

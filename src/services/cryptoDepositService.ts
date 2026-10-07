@@ -1,8 +1,8 @@
 import mongoose, { Types } from 'mongoose';
 import Transaction from '../models/Transaction';
 import User from '../models/User';
+import Admin from '../models/Admin';
 import LedgerService from './ledgerService';
-import AdminSyncService from './adminSyncService';
 
 export interface IProcessDepositParams {
   provider: 'nowpayments' | 'oxapay';
@@ -70,14 +70,14 @@ export class CryptoDepositService {
 
       // If already marked success, return balance without double-crediting
       if (existingTx.status === 'success') {
-        const user = await AdminSyncService.resolveUser(existingTx.user);
+        const account = (await User.findById(existingTx.user)) || (await Admin.findById(existingTx.user));
         return {
           success: true,
           credited: true,
           alreadyCredited: true,
           amount: existingTx.amount / 1_000_000,
           txId: existingTx._id.toString(),
-          user,
+          user: account,
         };
       }
     } else {
@@ -114,10 +114,10 @@ export class CryptoDepositService {
       }
     }
 
-    // Verify user exists in system (supports both standard users and admin accounts)
-    const userDoc = await AdminSyncService.resolveUser(targetUserId);
-    if (!userDoc) {
-      return { success: false, credited: false, amount: 0, error: 'User account does not exist.' };
+    // Verify account exists in system (checks User model for hosts, or Admin model for administrators)
+    const accountDoc: any = (await User.findById(targetUserId)) || (await Admin.findById(targetUserId));
+    if (!accountDoc) {
+      return { success: false, credited: false, amount: 0, error: 'Account does not exist.' };
     }
 
     // ── 2. ATOMIC STATE TRANSITION & LEDGER CREDIT ─────────────────────────
@@ -165,7 +165,7 @@ export class CryptoDepositService {
             alreadyCredited: true,
             amount: checkCurrent.amount / 1_000_000,
             txId: checkCurrent._id.toString(),
-            user: userDoc,
+            user: accountDoc,
           };
         }
 
@@ -199,7 +199,7 @@ export class CryptoDepositService {
       await session.commitTransaction();
 
       console.log(
-        `[CryptoDeposit Success] Credited gross $${amountUsdtGross} USDT (${amountUnits} units) to user ${userDoc.email} [${cleanRef}]`
+        `[CryptoDeposit Success] Credited gross $${amountUsdtGross} USDT (${amountUnits} units) to account ${accountDoc.email} [${cleanRef}]`
       );
 
       return {
@@ -208,7 +208,7 @@ export class CryptoDepositService {
         alreadyCredited: false,
         amount: amountUsdtGross,
         txId: tx._id.toString(),
-        user: userDoc,
+        user: accountDoc,
       };
     } catch (err: any) {
       await session.abortTransaction();
@@ -221,7 +221,7 @@ export class CryptoDepositService {
           credited: true,
           alreadyCredited: true,
           amount: amountUsdtGross,
-          user: userDoc,
+          user: accountDoc,
         };
       }
 

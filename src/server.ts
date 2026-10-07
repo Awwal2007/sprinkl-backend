@@ -17,7 +17,9 @@ async function startServer() {
     // Clean up stale isOnline presence flags from previous crashes/reboots
     const User = (await import('./models/User')).default;
     await User.updateMany({ isOnline: true }, { isOnline: false });
-    console.log(`[Sprinkl] Reset stale isOnline presence flags`);
+    // Ensure no admin roles exist in User model: only dedicated Admin model represents administrators
+    await User.updateMany({ role: 'admin' as any }, { role: 'host' as any });
+    console.log(`[Sprinkl] Reset stale presence flags & confirmed pure host role for User collection`);
 
     // Wrap Express app in a native http.Server so Socket.IO can attach
     const httpServer = http.createServer(app);

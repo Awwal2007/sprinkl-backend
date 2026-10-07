@@ -25,7 +25,7 @@ export interface IUser extends Document {
   email: string;
   phone?: string;
   passwordHash: string;
-  role: 'host' | 'admin';
+  role: 'host';
   emailVerified: boolean;
   verificationToken?: string;
   verificationTokenExpires?: Date;
@@ -71,7 +71,7 @@ const userSchema = new Schema<IUser>(
 
     role: {
       type: String,
-      enum: ['host', 'admin'],
+      enum: ['host'],
       default: 'host',
     },
 

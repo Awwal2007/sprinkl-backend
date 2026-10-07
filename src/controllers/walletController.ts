@@ -13,7 +13,8 @@ import Giveaway from '../models/Giveaway';
 
 export const getWallet = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const userId = req.user!._id;
+    const actor: any = req.admin || req.user!;
+    const userId = actor._id;
 
     const ngnWallet = await LedgerService.getOrCreateWallet(userId, 'NGN');
     const usdtWallet = await LedgerService.getOrCreateWallet(userId, 'USDT');
@@ -50,10 +51,10 @@ export const getWallet = async (req: AuthRequest, res: Response, next: NextFunct
         feePercentage,
       },
       dva: {
-        accountNumber: req.user!.paystackDvaAccountNumber,
-        bankName: req.user!.paystackDvaBankName,
+        accountNumber: actor.paystackDvaAccountNumber,
+        bankName: actor.paystackDvaBankName,
       },
-      cryptoAddresses: req.user!.cryptoDepositAddresses || [],
+      cryptoAddresses: actor.cryptoDepositAddresses || [],
       ledgerHistory,
     });
   } catch (err) {
@@ -63,7 +64,7 @@ export const getWallet = async (req: AuthRequest, res: Response, next: NextFunct
 
 export const setupNgnDva = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const user = req.user!;
+    const user: any = req.admin || req.user!;
 
     if (!user.paystackDvaAccountNumber) {
       const dvaInfo = await flutterwaveService.createVirtualAccount(user);
@@ -98,7 +99,7 @@ export const initializeFlutterwaveDeposit = async (req: AuthRequest, res: Respon
       return res.status(400).json({ error: 'Minimum deposit is ₦1,000.' });
     }
 
-    const user = req.user!;
+    const user: any = req.admin || req.user!;
     const txRef = `DEP_${user._id}_${Date.now()}`;
     const flwSecret = process.env.FLUTTERWAVE_SECRET_KEY;
 
@@ -169,7 +170,7 @@ export const initializeFlutterwaveDeposit = async (req: AuthRequest, res: Respon
 export const getUsdtDepositAddress = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { chain = 'TRC20' } = req.body;
-    const user = req.user!;
+    const user: any = req.admin || req.user!;
 
     // Always derive from configured hot wallet — never serve stale cached fake addresses
     let address: string;
@@ -208,7 +209,7 @@ export const getUsdtDepositAddress = async (req: AuthRequest, res: Response, nex
 export const createNowPaymentsDepositInvoice = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { amountUsdt, chain = 'TRC20' } = req.body;
-    const user = req.user!;
+    const user: any = req.admin || req.user!;
 
     // Enforce network-aware minimums (Tron TRC-20 has ~11.45 USDT network minimum on NOWPayments)
     const minAmount = chain === 'TRC20' ? 12 : 1;
@@ -356,7 +357,7 @@ export const checkNowPaymentsDepositStatus = async (req: AuthRequest, res: Respo
       return res.status(400).json({ error: 'Payment ID or Track ID is required' });
     }
 
-    const user = req.user!;
+    const user: any = req.admin || req.user!;
 
     // Strict ownership validation if transaction is already in DB
     const npTx = await Transaction.findOne({
@@ -430,7 +431,7 @@ export const checkCryptoDepositStatus = checkNowPaymentsDepositStatus;
 export const verifyFlutterwavePayment = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { transactionId, txRef } = req.body;
-    const user = req.user!;
+    const user: any = req.admin || req.user!;
     const flwSecret = process.env.FLUTTERWAVE_SECRET_KEY;
 
     if (!flwSecret) {
@@ -534,7 +535,7 @@ export const verifyFlutterwavePayment = async (req: AuthRequest, res: Response, 
 
 export const syncPendingDeposits = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const user = req.user!;
+    const user: any = req.admin || req.user!;
     const flwSecret = process.env.FLUTTERWAVE_SECRET_KEY;
     const axios = (await import('axios')).default;
 
@@ -634,7 +635,7 @@ export const manualResolveDeposit = async (req: AuthRequest, res: Response, next
     }
 
     const cleanRef = reference.trim();
-    const user = req.user!;
+    const user: any = req.admin || req.user!;
     const flwSecret = process.env.FLUTTERWAVE_SECRET_KEY;
     const axios = (await import('axios')).default;
 

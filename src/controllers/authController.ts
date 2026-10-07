@@ -5,7 +5,6 @@ import { z } from 'zod';
 import User from '../models/User';
 import Admin from '../models/Admin';
 import { AuthRequest } from '../middleware/auth';
-import AdminSyncService from '../services/adminSyncService';
 
 import crypto from 'crypto';
 import emailService from '../services/emailService';
@@ -329,9 +328,6 @@ export const verifyLoginOtp = async (req: Request, res: Response, next: NextFunc
       admin.refreshTokenHash = await bcrypt.hash(refreshToken, 10);
       await admin.save();
 
-      // Automatically sync and retrieve User model for this admin
-      const userDoc = await AdminSyncService.syncAdminUser(admin);
-
       return res.json({
         message: 'Admin login successful',
         accessToken,
@@ -344,11 +340,11 @@ export const verifyLoginOtp = async (req: Request, res: Response, next: NextFunc
           adminRole: admin.role,
           emailVerified: true,
           isAdmin: true,
-          phone: userDoc.phone || '',
-          kyc: userDoc.kyc,
-          paystackDvaAccountNumber: userDoc.paystackDvaAccountNumber,
-          paystackDvaBankName: userDoc.paystackDvaBankName,
-          cryptoDepositAddresses: userDoc.cryptoDepositAddresses || [],
+          phone: admin.phone || '',
+          kyc: admin.kyc || { status: 'verified', payoutReviewThreshold: 500000000 },
+          paystackDvaAccountNumber: admin.paystackDvaAccountNumber,
+          paystackDvaBankName: admin.paystackDvaBankName,
+          cryptoDepositAddresses: admin.cryptoDepositAddresses || [],
           lastLoginAt: admin.lastLoginAt,
           lastActiveAt: admin.lastActiveAt,
         },
@@ -531,15 +527,15 @@ export const me = async (req: AuthRequest, res: Response) => {
         id: req.admin._id,
         fullName: req.admin.fullName,
         email: req.admin.email,
-        phone: req.user?.phone || '',
+        phone: req.admin.phone || '',
         role: 'admin',
         adminRole: req.admin.role,
         emailVerified: true,
         isAdmin: true,
-        kyc: req.user?.kyc || { status: 'verified', payoutReviewThreshold: 500000000 },
-        paystackDvaAccountNumber: req.user?.paystackDvaAccountNumber,
-        paystackDvaBankName: req.user?.paystackDvaBankName,
-        cryptoDepositAddresses: req.user?.cryptoDepositAddresses || [],
+        kyc: req.admin.kyc || { status: 'verified', payoutReviewThreshold: 500000000 },
+        paystackDvaAccountNumber: req.admin.paystackDvaAccountNumber,
+        paystackDvaBankName: req.admin.paystackDvaBankName,
+        cryptoDepositAddresses: req.admin.cryptoDepositAddresses || [],
         lastLoginAt: req.admin.lastLoginAt,
         lastActiveAt: req.admin.lastActiveAt,
       },
